@@ -30,6 +30,7 @@ def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
                     cmd = execute_cmd % task_item
                     logging.info('Starting task %s' %(cmd))
                     if not simulate:
+                        execute(cmd) 
                         pass
                     else:
                         # Simulate processing
@@ -47,6 +48,13 @@ def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
         time.sleep(3)
     logging.info('Finishing executor thread')
 
+
+def execute(cmd):
+    """Execute the command
+    """
+    comm = subprocess.run(cmd, capture_output=True)
+    logging.debug(comm.stdout)
+    logging.warn(comm.stderr)
 
 def discard_queue_elements(queue):
     logging.debug('Discarding task from the task_queue due to discard '
