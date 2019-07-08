@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 import signal
-from subprocess import (Popen, PIPE)
+import subprocess
 import threading
 import time
 
@@ -18,8 +18,12 @@ shutdown_event = threading.Event()
 pause_event = threading.Event()
 discard_tasks_event = threading.Event()
 
+logger = logging.getLogger(__name__)
+log_handler = None
 
-def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
+
+def executor(task_queue, finished_task_queue, execute_cmd, task_location,
+             simulate=False):
     logging.info('Starting executor thread')
     while not shutdown_event.is_set():
         if not discard_tasks_event.is_set():
@@ -28,14 +32,14 @@ def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
                 task_item = task_queue.get(False, 1)
                 if task_item:
                     cmd = execute_cmd % task_item
-                    logging.info('Starting task %s' %(cmd))
+                    logging.info('Starting task %s', cmd)
                     if not simulate:
-                        execute(cmd) 
+                        execute(execute_cmd, task_item, task_location)
                         pass
                     else:
                         # Simulate processing
                         time.sleep(1)
-                    logging.info('Task %s finished' %(cmd))
+                    logging.info('Task %s finished', cmd)
                     finished_task_queue.put(task_item)
                     task_queue.task_done()
                 else:
@@ -43,20 +47,45 @@ def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
             except _queue.Empty:
                 pass
             except Exception as e:
-                logging.fatal('Exception occured during task processing',
+                logging.fatal('Exception occured during task processing: %s',
+                              e,
                               exc_info=True)
         time.sleep(3)
     logging.info('Finishing executor thread')
 
 
-def execute(cmd):
+def preexec_function():
+    """Pre-exec to hide SIGINT for child process
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def execute(cmd, task, task_location):
     """Execute the command
     """
-    comm = subprocess.run(cmd, capture_output=True)
-    logging.debug(comm.stdout)
-    logging.warn(comm.stderr)
+    task_logger = logging.getLogger('executor.task')
+    task_logger.setLevel(logging.INFO)
+
+    # add ch to logger
+    task_logger.addHandler(get_log_handler())
+
+    execute_cmd = (cmd % Path(task_location, task)).split(' ')
+
+    process = subprocess.Popen(execute_cmd, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE,
+                               preexec_fn=preexec_function,
+                               restore_signals=False)
+    # Read the output
+    for line in process.stdout:
+        task_logger.info('%s: %s', task, line.decode('utf-8'))
+    if process.stderr:
+        task_logger.error('%s: %s', task,
+                          process.stderr.read().decode('utf-8'))
+
 
 def discard_queue_elements(queue):
+    """Simply discard all event from queue
+    """
     logging.debug('Discarding task from the task_queue due to discard '
                   'event being set')
     while not queue.empty():
@@ -69,6 +98,11 @@ def discard_queue_elements(queue):
 
 def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
               repo_refresh_interval):
+    """Scheduler function
+
+    Reads the git repo and schedule tasks. When an update in the repository is
+    detected all tasks are finished, repo updated and new tasks are scheduled.
+    """
     logging.info('Starting scheduler thread')
     try:
         data = threading.local()
@@ -110,6 +144,8 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
 
 
 def get_git_repo(repo_url, work_dir, ref):
+    """Get a repository object
+    """
     logging.debug('Getting git repository')
     git_path = Path(work_dir, '.git')
     if git_path.exists():
@@ -122,11 +158,13 @@ def get_git_repo(repo_url, work_dir, ref):
 
 
 def is_repo_update_necessary(repo, ref):
+    """Check whether update of the repository is necessary
+
+    Returns True, when a commit checksum remotely differs from local state
+    """
     logging.debug('Checking whether there are remote changes in git')
     last_commit_remote = repo.remotes.origin.refs[ref].commit
-    #get_git_last_commit_remote(branch, 'origin')
     last_commit_local = repo.refs[ref].commit
-    #get_git_last_commit_remote(branch, '.')
     return last_commit_remote != last_commit_local
 
 
@@ -147,8 +185,30 @@ def signal_handler(signum, frame):
     shutdown_event.set()
 
 
+def get_log_handler():
+    """Get a log handler
+    """
+    global log_handler
+    if log_handler:
+        return log_handler
+    # create console handler and set level to debug
+    log_handler = logging.StreamHandler()
+    log_handler.setLevel(logging.DEBUG)
+
+    # create formatter
+    formatter = logging.Formatter('%(asctime)s | %(name)s | %(message)s')
+
+    # add formatter to ch
+    log_handler.setFormatter(formatter)
+    return log_handler
+
+
 def main():
-    logging.basicConfig(level=logging.DEBUG, format="%(threadName)s: %(message)s")
+    logger.setLevel(logging.DEBUG)
+
+    # add ch to logger
+    logger.addHandler(get_log_handler())
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         'repo',
@@ -197,15 +257,15 @@ def main():
     curr_dir = os.getcwd()
     try:
         os.chdir(args.work_dir)
-        with ThreadPoolExecutor(max_workers=args.count_executor_threads
-                                + 1) as thread_pool:
+        with ThreadPoolExecutor(max_workers=args.count_executor_threads + 1) \
+                as thread_pool:
             signal.signal(signal.SIGINT, signal_handler)
             task_queue = _queue.Queue()
             finished_task_queue = _queue.Queue()
 
             for i in range(args.count_executor_threads):
                 thread_pool.submit(executor, task_queue, finished_task_queue,
-                                   args.command, args.simulate)
+                                   args.command, args.location, args.simulate)
             thread_pool.submit(scheduler, task_queue, finished_task_queue,
                                args.repo, args.location, args.work_dir,
                                args.ref, args.interval)
