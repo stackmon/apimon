@@ -3,7 +3,7 @@
 mkdir -p /usr/app
 cd /usr/app
 
-checkout_location=test_repo
+work_dir=/usr/app/test_repo
 
 chmod u+x executor.py
 
@@ -14,13 +14,12 @@ else
     repo=${EXECUTOR_REPO_URL}
 fi
 
-git clone ${repo} ${checkout_location}
+git clone ${repo} ${work_dir}
 
-if [ -f "{checkout_location}/requirements.yml" ]; then
-    ansible-galaxy install -r ${checkout_location}/requirements.yml
+if [ -f "${work_dir}/requirements.yml" ]; then
+    ansible-galaxy install -r ${work_dir}/requirements.yml
 fi
 
-work_dir=/usr/app/${checkout_location}
 git_ref=${EXECUTOR_GIT_REF:-master}
 scenarios_location=${EXECUTOR_SCENARIOS_LOCATION:-playbooks/scenarios}
 interval=${EXECUTOR_REFRESH_INTERVAL:-120}
