@@ -164,7 +164,7 @@ def is_repo_update_necessary(repo, ref):
     Returns True, when a commit checksum remotely differs from local state
     """
     logging.debug('Checking whether there are remote changes in git')
-    repo.remotes.origin.refs[ref].update()
+    repo.remotes.origin.update()
     last_commit_remote = repo.remotes.origin.refs[ref].commit
     last_commit_local = repo.refs[ref].commit
     return last_commit_remote != last_commit_local
