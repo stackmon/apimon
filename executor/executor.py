@@ -125,8 +125,7 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
                     # Refresh the work_dir
                     refresh_git_repo(git_repo, ref)
                     schedule_tasks(task_queue, work_dir, location)
-                    data.next_git_refresh = time.time() + \
-                        repo_refresh_interval * 60
+                    data.next_git_refresh = time.time() + repo_refresh_interval
             # Now check the finished tasks queue and re-queue them
             # Not blocking wait to react on shutdown
             try:
@@ -234,8 +233,8 @@ def main():
     parser.add_argument(
         '--interval',
         type=int,
-        default=2,
-        help='Interval in minutes to check repository for updates.'
+        default=120,
+        help='Interval in seconds to check repository for updates.'
     )
     parser.add_argument(
         '--count_executor_threads',
