@@ -125,7 +125,8 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
                     # Refresh the work_dir
                     refresh_git_repo(git_repo, ref)
                     schedule_tasks(task_queue, work_dir, location)
-                    data.next_git_refresh = time.time() + repo_refresh_interval
+                    data.next_git_refresh = time.time() + \
+                        repo_refresh_interval * 60
             # Now check the finished tasks queue and re-queue them
             # Not blocking wait to react on shutdown
             try:
@@ -163,6 +164,7 @@ def is_repo_update_necessary(repo, ref):
     Returns True, when a commit checksum remotely differs from local state
     """
     logging.debug('Checking whether there are remote changes in git')
+    repo.remotes.origin.refs[ref].update()
     last_commit_remote = repo.remotes.origin.refs[ref].commit
     last_commit_local = repo.refs[ref].commit
     return last_commit_remote != last_commit_local
@@ -232,8 +234,8 @@ def main():
     parser.add_argument(
         '--interval',
         type=int,
-        default=4,
-        help='Interval to check repository for updates.'
+        default=2,
+        help='Interval in minutes to check repository for updates.'
     )
     parser.add_argument(
         '--count_executor_threads',
@@ -274,6 +276,7 @@ def main():
         os.chdir(curr_dir)
 
     return
+
 
 if __name__ == "__main__":
     main()
