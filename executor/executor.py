@@ -6,10 +6,13 @@ import queue as _queue
 import logging
 import os
 from pathlib import Path
+import random
 import signal
+import string
 import subprocess
 import threading
 import time
+# import uuid
 
 from git import Repo
 
@@ -18,13 +21,24 @@ shutdown_event = threading.Event()
 pause_event = threading.Event()
 discard_tasks_event = threading.Event()
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('executor')
+task_logger = logging.getLogger('executor.task')
 log_handler = None
 
 
-def executor(task_queue, finished_task_queue, execute_cmd, task_location,
-             simulate=False):
-    logging.info('Starting executor thread')
+class ExecutorLoggingAdapter(logging.LoggerAdapter):
+    """
+    This example adapter expects the passed in dict-like object to have a
+    'task' and 'job_id' key, whose value in brackets is prepended to the log
+    message.
+    """
+    def process(self, msg, kwargs):
+        return 'jobId:%s | task:%s | %s' % (
+            self.extra.get('job_id'), self.extra.get('task'), msg), kwargs
+
+
+def executor(task_queue, finished_task_queue, execute_cmd, simulate=False):
+    logger.info('Starting executor thread')
     while not shutdown_event.is_set():
         if not discard_tasks_event.is_set():
             # Not blocking wait to be able to react on shutdown
@@ -32,26 +46,29 @@ def executor(task_queue, finished_task_queue, execute_cmd, task_location,
                 task_item = task_queue.get(False, 1)
                 if task_item:
                     cmd = execute_cmd % task_item
-                    logging.info('Starting task %s', cmd)
+                    # job_id = str(uuid.uuid4().hex[-12:])
+                    job_id = ''.join([random.choice(string.ascii_letters +
+                                                    string.digits) for n in
+                                      range(12)])
+                    logging.info('Starting task %s with jobId: %s', cmd,
+                                 job_id)
                     if not simulate:
-                        execute(execute_cmd, task_item, task_location)
+                        execute(execute_cmd, task_item, job_id)
                         pass
                     else:
                         # Simulate processing
                         time.sleep(1)
-                    logging.info('Task %s finished', cmd)
+                    logging.info('Task %s (%s) finished', cmd, job_id)
                     finished_task_queue.put(task_item)
                     task_queue.task_done()
                 else:
                     break
             except _queue.Empty:
                 pass
-            except Exception as e:
-                logging.fatal('Exception occured during task processing: %s',
-                              e,
-                              exc_info=True)
+            except Exception:
+                logger.exception('Exception occured during task processing')
         time.sleep(3)
-    logging.info('Finishing executor thread')
+    logger.info('Finishing executor thread')
 
 
 def preexec_function():
@@ -60,34 +77,33 @@ def preexec_function():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-def execute(cmd, task, task_location):
+def execute(cmd, task, job_id=None):
     """Execute the command
     """
-    task_logger = logging.getLogger('executor.task')
-    task_logger.setLevel(logging.INFO)
-
-    # add ch to logger
-    task_logger.addHandler(get_log_handler())
-
-    execute_cmd = (cmd % Path(task_location, task)).split(' ')
+    adapter = ExecutorLoggingAdapter(task_logger, {'task': task, 'job_id':
+                                                   job_id})
+    execute_cmd = (cmd % Path(task)).split(' ')
 
     process = subprocess.Popen(execute_cmd, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE,
                                preexec_fn=preexec_function,
+                               env={
+                                   'TASK_EXECUTOR_JOB_ID': job_id
+                               },
                                restore_signals=False)
     # Read the output
     for line in process.stdout:
-        task_logger.info('%s: %s', task, line.decode('utf-8'))
-    if process.stderr:
-        task_logger.error('%s: %s', task,
-                          process.stderr.read().decode('utf-8'))
+        adapter.info('%s', line.decode('utf-8'))
+    stderr = process.stderr.read()
+    if stderr:
+        adapter.error('%s', stderr.decode('utf-8'))
 
 
 def discard_queue_elements(queue):
     """Simply discard all event from queue
     """
-    logging.debug('Discarding task from the task_queue due to discard '
-                  'event being set')
+    logger.debug('Discarding task from the task_queue due to discard '
+                 'event being set')
     while not queue.empty():
         try:
             queue.get(False)
@@ -103,7 +119,7 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
     Reads the git repo and schedule tasks. When an update in the repository is
     detected all tasks are finished, repo updated and new tasks are scheduled.
     """
-    logging.info('Starting scheduler thread')
+    logger.info('Starting scheduler thread')
     try:
         data = threading.local()
         git_repo = get_git_repo(repo, work_dir, ref)
@@ -115,12 +131,15 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
             if current_time >= data.next_git_refresh:
                 if is_repo_update_necessary(git_repo, ref):
                     # Check for all current scheduled items to complete
-                    logging.debug('Waiting for the current queue to become '
-                                  'empty')
+                    logger.debug('Waiting for the current queue to become '
+                                 'empty')
                     discard_tasks_event.set()
                     discard_queue_elements(task_queue)
-                    discard_queue_elements(finished_task_queue)
                     task_queue.join()
+                    # wait for all running tasks to complete
+                    # and then also clean the finished queue
+                    discard_queue_elements(finished_task_queue)
+                    finished_task_queue.join()
                     discard_tasks_event.clear()
                     # Refresh the work_dir
                     refresh_git_repo(git_repo, ref)
@@ -137,22 +156,22 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
             except _queue.Empty:
                 pass
             time.sleep(1)
-    except Exception as e:
-        logging.fatal('Error occured in the scheduler thread: %s' % e,
-                      exc_info=True)
-    logging.info('finishing scheduler thread')
+    except Exception:
+        logger.exception('Error occured in the scheduler thread')
+    logger.info('finishing scheduler thread')
+    shutdown_event.set()
 
 
 def get_git_repo(repo_url, work_dir, ref):
     """Get a repository object
     """
-    logging.debug('Getting git repository')
+    logger.debug('Getting git repository')
     git_path = Path(work_dir, '.git')
     if git_path.exists():
         repo = Repo(work_dir)
         refresh_git_repo(repo, ref)
     else:
-        repo = Repo.clone_from(repo_url, work_dir)
+        repo = Repo.clone_from(repo_url, work_dir, recurse_submodules='.')
         repo.remotes.origin.pull(ref)
     return repo
 
@@ -162,7 +181,7 @@ def is_repo_update_necessary(repo, ref):
 
     Returns True, when a commit checksum remotely differs from local state
     """
-    logging.debug('Checking whether there are remote changes in git')
+    logger.debug('Checking whether there are remote changes in git')
     repo.remotes.origin.update()
     last_commit_remote = repo.remotes.origin.refs[ref].commit
     last_commit_local = repo.refs[ref].commit
@@ -170,19 +189,19 @@ def is_repo_update_necessary(repo, ref):
 
 
 def refresh_git_repo(repo, ref):
-    repo.remotes.origin.pull(ref)
+    repo.remotes.origin.pull(ref, recurse_submodules=True)
 
 
 def schedule_tasks(queue, work_dir, location):
-    logging.debug('Looking for tasks')
+    logger.debug('Looking for tasks')
     for file in Path(work_dir, location).glob('scenario*.yaml'):
-        logging.debug('Scheduling %s' % file)
+        logger.debug('Scheduling %s' % file)
         queue.put(file)
 
 
 def signal_handler(signum, frame):
     # Raise shutdown event
-    logging.info('Signal received. Gracefully stop processing')
+    logger.info('Signal received. Gracefully stop processing')
     shutdown_event.set()
 
 
@@ -206,9 +225,12 @@ def get_log_handler():
 
 def main():
     logger.setLevel(logging.DEBUG)
+    task_logger.setLevel(logging.INFO)
 
     # add ch to logger
     logger.addHandler(get_log_handler())
+    # add ch to logger
+    task_logger.addHandler(get_log_handler())
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -218,7 +240,7 @@ def main():
     parser.add_argument(
         '--location',
         help='Location in the repository to get playbooks from.',
-        default='/playbooks/scenarios'
+        default='playbooks/scenarios'
     )
     parser.add_argument(
         '--work_dir',
@@ -254,9 +276,10 @@ def main():
         help='Simulate execution.'
     )
     args = parser.parse_args()
-    logging.info('starting')
+    logger.info('starting')
     curr_dir = os.getcwd()
     try:
+        Path(args.work_dir).mkdir(parents=True, exist_ok=True)
         os.chdir(args.work_dir)
         with ThreadPoolExecutor(max_workers=args.count_executor_threads + 1) \
                 as thread_pool:
@@ -266,7 +289,7 @@ def main():
 
             for i in range(args.count_executor_threads):
                 thread_pool.submit(executor, task_queue, finished_task_queue,
-                                   args.command, args.location, args.simulate)
+                                   args.command, args.simulate)
             thread_pool.submit(scheduler, task_queue, finished_task_queue,
                                args.repo, args.location, args.work_dir,
                                args.ref, args.interval)
