@@ -84,12 +84,14 @@ def execute(cmd, task, job_id=None):
                                                    job_id})
     execute_cmd = (cmd % Path(task)).split(' ')
 
+    env = os.environ.copy()
+
+    env['TASK_EXECUTOR_JOB_ID'] = job_id
+
     process = subprocess.Popen(execute_cmd, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE,
                                preexec_fn=preexec_function,
-                               env={
-                                   'TASK_EXECUTOR_JOB_ID': job_id
-                               },
+                               env=env,
                                restore_signals=False)
     # Read the output
     for line in process.stdout:
