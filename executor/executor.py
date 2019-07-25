@@ -104,8 +104,8 @@ def execute(cmd, task, job_id=None):
 def discard_queue_elements(queue):
     """Simply discard all event from queue
     """
-    logger.debug('Discarding task from the task_queue due to discard '
-                 'event being set')
+    logger.debug('Discarding task from the %s due to discard '
+                 'event being set', queue)
     while not queue.empty():
         try:
             queue.get(False)
@@ -141,7 +141,6 @@ def scheduler(task_queue, finished_task_queue, repo, location, work_dir, ref,
                     # wait for all running tasks to complete
                     # and then also clean the finished queue
                     discard_queue_elements(finished_task_queue)
-                    finished_task_queue.join()
                     discard_tasks_event.clear()
                     # Refresh the work_dir
                     refresh_git_repo(git_repo, ref)
