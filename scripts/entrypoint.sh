@@ -14,7 +14,7 @@ else
     repo=${EXECUTOR_REPO_URL}
 fi
 
-git clone ${repo} ${work_dir}
+git clone ${repo} ${work_dir} --recurse-submodules
 
 if [ -f "${work_dir}/requirements.yml" ]; then
     ansible-galaxy install -r ${work_dir}/requirements.yml
