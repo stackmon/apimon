@@ -291,12 +291,16 @@ class CallbackModule(CallbackBase):
                     status=status)
         elif 'results' in result_dict:
             for res in result_dict['results']:
+                if 'delta' not in res:
+                    res['delta'] = -1
                 self._log_message(
                     result,
                     "Runtime: {delta}".format(**res))
         elif result_dict.get('msg') == 'All items completed':
             self._log_message(result, result_dict['msg'])
         else:
+            if 'delta' not in result_dict:
+                result_dict['delta'] = -1
             self._log_message(
                 result,
                 "Runtime: {delta}".format(
@@ -328,8 +332,10 @@ class CallbackModule(CallbackBase):
             for line in stdout_lines:
                 hostname = self._get_hostname(result)
                 self._log("%s | %s " % (hostname, line))
+            if 'delta' not in result_dict:
+                result_dict['delta'] = -1
 
-            if isinstance(result_dict['item'], str):
+            if 'item' in result_dict and isinstance(result_dict['item'], str):
                 self._log_message(
                     result,
                     "Item: {item} Runtime: {delta}".format(**result_dict))
@@ -360,7 +366,6 @@ class CallbackModule(CallbackBase):
                 hostname = self._get_hostname(result)
                 self._log("%s | %s " % (hostname, line))
 
-            # self._log("Result: %s" % (result_dict))
             self._log_message(
                 result, "Item: {item} Result: {rc}".format(**result_dict))
 
