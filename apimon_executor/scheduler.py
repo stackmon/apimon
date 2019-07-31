@@ -311,13 +311,14 @@ class Executor(object):
         self.log.info('Finishing executor thread')
 
     def archive_log_file(self, job_log_file):
-        # Archive log
-        with open(job_log_file, 'rb') as f_in:
-            with gzip.open(job_log_file.with_suffix('.txt.gz'), 'wb') as gz:
-                shutil.copyfileobj(f_in, gz)
-
-        # Now remove the job log, since we archived it
         if job_log_file.exists():
+            # Archive log
+            with open(job_log_file, 'rb') as f_in:
+                with gzip.open(
+                        job_log_file.with_suffix('.txt.gz'), 'wb') as gz:
+                    shutil.copyfileobj(f_in, gz)
+
+            # Now remove the job log, since we archived it
             job_log_file.unlink()
 
     def execute(self, cmd, task, job_id=None):

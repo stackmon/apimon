@@ -6,5 +6,5 @@ executor:
   git_refresh_interval: 2
   location: playbooks/scenarios
   count_executor_threads: 8
-  log_config: etc/logging.conf
+  log_config: /usr/app/task_executor/etc/logging.conf
   log_dest: /var/log/executor/jobs
