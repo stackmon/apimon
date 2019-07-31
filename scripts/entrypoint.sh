@@ -5,8 +5,6 @@ cd /usr/app
 
 git_dir=/usr/app/test_repo
 
-chmod u+x executor.py
-
 if [[ ! "${EXECUTOR_REPO_URL}" ]]; then
     echo -e "\$EXECUTOR_REPO_URL variable must be set.\n"
     exit 1
@@ -27,9 +25,9 @@ interval=${EXECUTOR_REFRESH_INTERVAL:-120}
 count_executors=${EXECUTOR_COUNT_EXECUTORS:-10}
 
 apimon-scheduler --config ${config} --repo ${repo} \
-    --git-checkout-dir ${work_dir} \
+    --git-checkout-dir ${git_dir} \
     --git-ref ${git_ref} --location ${scenarios_location} \
     --git-refresh-interval ${interval} \
-    --countr-executor-threads ${count_executors}
+    --count-executor-threads ${count_executors}
 
 wait

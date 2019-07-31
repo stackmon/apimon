@@ -32,6 +32,7 @@ class ExecutorConfig(object):
                 'count_executor_threads': 5,
                 'exec_cmd': 'ansible-playbook -i inventory/testing',
                 'log_dest': '/var/log/executor/logs',
+                'log_config': '/usr/app/task_executor/etc/logging.conf',
                 'simulate': False
             }
 
