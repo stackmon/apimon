@@ -1,4 +1,6 @@
+ansible
 otcextensions
 GitPython
 statsd
 influxdb
+pbr

@@ -31,8 +31,10 @@ RUN cd ansible && python3 setup.py install --user
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
+RUN python3 setup.py install --user
+
 COPY ./scripts/entrypoint.sh /usr/app
-COPY ./executor/executor.py /usr/app
+#COPY ./executor/executor.py /usr/app
 
 ENV PATH=/root/.local/bin:$PATH
 

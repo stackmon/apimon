@@ -1,0 +1,10 @@
+---
+executor:
+  repo: https://githib.com/opentelekomcloud-infra/api-monitoring
+  git_checkout_dir: wrk
+  git_ref: master
+  git_refresh_interval: 2
+  location: playbooks/scenarios
+  count_executor_threads: 8
+  log_config: etc/logging.conf
+  log_dest: /var/log/executor/jobs
