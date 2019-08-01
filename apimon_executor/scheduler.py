@@ -12,6 +12,7 @@
 #
 
 from concurrent.futures import ThreadPoolExecutor
+import configparser
 import gzip
 import queue as _queue
 import logging
@@ -321,6 +322,22 @@ class Executor(object):
             # Now remove the job log, since we archived it
             job_log_file.unlink()
 
+    def _prepare_ansible_cfg(self, work_dir):
+        config = configparser.ConfigParser()
+
+        ansible_cfg = Path(work_dir, 'ansible.cfg')
+
+        if ansible_cfg.exists():
+            # The ansible cfg already exists - read it
+            config.read(ansible_cfg.as_posix())
+        else:
+            config['defaults'] = {}
+
+        config['defaults']['stdout_callback'] = 'apimon_logger'
+
+        with open(ansible_cfg, 'w') as f:
+            config.write(f)
+
     def execute(self, cmd, task, job_id=None):
         """Execute the command
         """
@@ -343,6 +360,8 @@ class Executor(object):
             # Flush job log config into file for plugin to fetch it
             job_log_config_file = Path(job_work_dir, 'logging.json').as_posix()
             job_log_config.writeJson(job_log_config_file)
+
+            self._prepare_ansible_cfg(job_work_dir)
 
             execute_cmd = (cmd % Path(task)).split(' ')
 

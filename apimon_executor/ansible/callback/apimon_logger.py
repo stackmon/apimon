@@ -52,8 +52,12 @@ class CallbackModule(CallbackBase):
         self._playbook_name = None
 
     def configure_logger(self):
-        logging_config = \
-            logconfig.load_job_config(os.environ['APIMON_EXECUTOR_JOB_CONFIG'])
+        log_config = os.getenv('APIMON_EXECUTOR_JOB_CONFIG')
+        if log_config:
+            logging_config = logconfig.load_job_config(log_config)
+        else:
+            logging_config = logconfig.JobLoggingConfig(
+                job_output_file='stdout.log')
 
         if self._display.verbosity > 2:
             logging_config.setDebug()
@@ -110,7 +114,7 @@ class CallbackModule(CallbackBase):
 
         hosts = self._get_task_hosts(task)
 
-        if task.action in ('command', 'shell', 'script'):
+        if task.action in ('command', 'shell'):
             play_vars = self._play._variable_manager._hostvars
 
             hosts = self._get_task_hosts(task)
@@ -281,7 +285,7 @@ class CallbackModule(CallbackBase):
                 self._log_message(
                     msg=json.dumps(result_dict, indent=2, sort_keys=True),
                     status=status, result=result)
-        elif result._task.action not in ('script', 'command', 'shell'):
+        elif result._task.action not in ('command', 'shell'):
             if 'msg' in result_dict:
                 self._log_message(msg=result_dict['msg'],
                                   result=result, status=status)
@@ -317,7 +321,7 @@ class CallbackModule(CallbackBase):
 
         if result_dict.get('msg', '').startswith('MODULE FAILURE'):
             self._log_module_failure(result, result_dict)
-        elif result._task.action not in ('script', 'command', 'shell'):
+        elif result._task.action not in ('command', 'shell'):
             if 'msg' in result_dict:
                 self._log_message(
                     result=result, msg=result_dict['msg'], status=status)
@@ -354,7 +358,7 @@ class CallbackModule(CallbackBase):
 
         if result_dict.get('msg', '').startswith('MODULE FAILURE'):
             self._log_module_failure(result, result_dict)
-        elif result._task.action not in ('script', 'command', 'shell'):
+        elif result._task.action not in ('command', 'shell'):
             self._log_message(
                 result=result,
                 msg="Item: {item}".format(item=result_dict['item']),
