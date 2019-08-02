@@ -108,11 +108,11 @@ class Scheduler(object):
     log = logging.getLogger('apimon_executor.scheduler')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 ignore_tasks_event, config=None):
+                 discard_tasks_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.ignore_tasks_event = ignore_tasks_event
+        self.discard_tasks_event = discard_tasks_event
         if config:
             self.reconfigure(config)
 
@@ -247,11 +247,11 @@ class Executor(object):
     log = logging.getLogger('apimon_executor.executor')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 ignore_tasks_event, config=None):
+                 discard_tasks_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.ignore_tasks_event = ignore_tasks_event
+        self.discard_tasks_event = discard_tasks_event
         if config:
             self.reconfigure(config)
         self.ansible_plugin_path = \
@@ -278,7 +278,7 @@ class Executor(object):
     def run(self):
         self.log.info('Starting Executor thread')
         while not self.shutdown_event.is_set():
-            if not self.ignore_tasks_event.is_set():
+            if not self.discard_tasks_event.is_set():
                 # Not blocking wait to be able to react on shutdown
                 try:
                     task_item = self.task_queue.get(False, 1)
