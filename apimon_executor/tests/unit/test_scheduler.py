@@ -3,7 +3,6 @@ from pathlib import Path
 import configparser
 import tempfile
 import unittest
-import mock
 
 from apimon_executor import scheduler as _scheduler
 
@@ -64,5 +63,3 @@ class ExecutorTest(unittest.TestCase):
             expected['defaults']['stdout_callback'] = 'apimon_logger'
 
             self.assertDictEqual(actual, expected)
-
-

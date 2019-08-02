@@ -69,7 +69,7 @@ class ApimonScheduler(object):
     def __init__(self, config):
         self.shutdown_event = threading.Event()
         self.pause_event = threading.Event()
-        self.discard_tasks_event = threading.Event()
+        self.ignore_tasks_event = threading.Event()
         self.task_queue = _queue.Queue()
         self.finished_task_queue = _queue.Queue()
 
@@ -92,13 +92,13 @@ class ApimonScheduler(object):
             for i in range(self.config.count_executor_threads):
                 thread = Executor(self.task_queue, self.finished_task_queue,
                                   self.shutdown_event,
-                                  self.discard_tasks_event)
+                                  self.ignore_tasks_event)
                 thread.reconfigure(self.config)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
                                          self.shutdown_event,
-                                         self.discard_tasks_event)
+                                         self.ignore_tasks_event)
             scheduler_thread.reconfigure(self.config)
             thread_pool.submit(scheduler_thread.run)
 
@@ -108,11 +108,11 @@ class Scheduler(object):
     log = logging.getLogger('apimon_executor.scheduler')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 discard_tasks_event, config=None):
+                 ignore_tasks_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.discard_tasks_event = discard_tasks_event
+        self.ignore_tasks_event = ignore_tasks_event
         if config:
             self.reconfigure(config)
 
@@ -159,13 +159,13 @@ class Scheduler(object):
                         # Check for all current scheduled items to complete
                         self.log.debug('Waiting for the current queue to '
                                        'become empty')
-                        self.discard_tasks_event.set()
+                        self.ignore_tasks_event.set()
                         self.discard_queue_elements(self.task_queue)
                         self.task_queue.join()
                         # wait for all running tasks to complete
                         # and then also clean the finished queue
                         self.discard_queue_elements(self.finished_task_queue)
-                        self.discard_tasks_event.clear()
+                        self.ignore_tasks_event.clear()
                         # Refresh the work_dir
                         self.refresh_git_repo(git_repo, self._git_ref)
                         self.schedule_tasks(self.task_queue)
@@ -247,11 +247,11 @@ class Executor(object):
     log = logging.getLogger('apimon_executor.executor')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 discard_tasks_event, config=None):
+                 ignore_tasks_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.discard_tasks_event = discard_tasks_event
+        self.ignore_tasks_event = ignore_tasks_event
         if config:
             self.reconfigure(config)
         self.ansible_plugin_path = \
@@ -278,7 +278,7 @@ class Executor(object):
     def run(self):
         self.log.info('Starting Executor thread')
         while not self.shutdown_event.is_set():
-            if not self.discard_tasks_event.is_set():
+            if not self.ignore_tasks_event.is_set():
                 # Not blocking wait to be able to react on shutdown
                 try:
                     task_item = self.task_queue.get(False, 1)
