@@ -20,7 +20,7 @@ class ExecutorConfig(object):
     def __init__(self, args):
         config = {}
 
-        if args.config:
+        if hasattr(args, 'config') and args.config:
             with open(args.config) as f:
                 config = yaml.load(f, Loader=yaml.SafeLoader)
         else:
