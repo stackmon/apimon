@@ -170,7 +170,7 @@ class Scheduler(object):
                         self.refresh_git_repo(git_repo, self._git_ref)
                         self.schedule_tasks(self.task_queue)
                         data.next_git_refresh = time.time() + \
-                            self._repo_refresh_interval
+                            self._git_refresh_interval
                 # Now check the finished tasks queue and re-queue them
                 # Not blocking wait to react on shutdown
                 try:
