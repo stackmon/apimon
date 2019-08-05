@@ -28,7 +28,7 @@ class ExecutorConfig(object):
                 'git_checkout_dir': 'wrk',
                 'location': 'playbooks/scenarios',
                 'git_ref': 'master',
-                'refresh_interval': 120,
+                'git_refresh_interval': 120,
                 'count_executor_threads': 5,
                 'exec_cmd': 'ansible-playbook -i inventory/testing',
                 'log_dest': '/var/log/executor/logs',
