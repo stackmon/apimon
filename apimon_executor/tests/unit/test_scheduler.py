@@ -7,12 +7,23 @@ import tempfile
 import unittest
 from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
-
+import time
 from apimon_executor import scheduler as _scheduler
 from apimon_executor import config as _config
+import subprocess
+from random import randrange
 
+_timeout = time.time() + 60
+    
 
 class ExecutorTest(unittest.TestCase):
+    def setUp(self):
+        self._cnf = _config.ExecutorConfig(args={})
+        ApimonScheduler = _scheduler.ApimonScheduler(None)
+        self.shutdown_event = ApimonScheduler.shutdown_event
+        self.ignore_tasks_event = ApimonScheduler.ignore_tasks_event
+        self.task_queue = ApimonScheduler.task_queue
+        self.finished_task_queue = ApimonScheduler.finished_task_queue
 
     def test_prepare_ansible_cfg_no_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -68,6 +79,57 @@ class ExecutorTest(unittest.TestCase):
             expected['defaults']['stdout_callback'] = 'apimon_logger'
 
             self.assertDictEqual(actual, expected)
+        
+    def _dummy_execute(self, cmd, task):
+        command = "sleep {}".format(randrange(5,9))
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True, stderr=subprocess.STDOUT)
+        process.wait()
+        if time.time() > _timeout:
+            self.shutdown_event.set()
+
+    @mock.patch(
+        "apimon_executor.scheduler.Scheduler.get_git_repo",
+        mock.MagicMock(
+            return_value="test_repo"))
+    @mock.patch(
+        "apimon_executor.scheduler.Scheduler.is_repo_update_necessary",
+            return_value=False)
+    @mock.patch(
+        "apimon_executor.scheduler.Executor.execute")
+    def test_executor_run(
+        self,
+        mock_repo_update_necessary,
+        mock_cmd_execute):
+
+        cnf = self._cnf
+        mock_cmd_execute.side_effect = self._dummy_execute
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(Path(tmpdir, 'dummy'))
+            Path(tmpdir, 'dummy/scenario1.yaml').touch()
+            Path(tmpdir, 'dummy/scenario2.yaml').touch()
+            setattr(cnf, 'scenarios', ['scenario1.yaml', 'scenario2.yaml'])
+            setattr(cnf, 'location', 'dummy')
+            setattr(cnf, 'git_checkout_dir', tmpdir)
+            setattr(cnf, 'git_refresh_interval', 6)
+
+            scheduler = _scheduler.Scheduler(
+                self.task_queue,
+                self.finished_task_queue,
+                self.shutdown_event,
+                self.ignore_tasks_event,
+                cnf)
+            executor = _scheduler.Executor(
+                self.task_queue,
+                self.finished_task_queue,
+                self.shutdown_event,
+                self.ignore_tasks_event,
+                cnf)
+            with ThreadPoolExecutor(max_workers=(cnf.count_executor_threads + 1)) as thread_pool:
+                scheduler.reconfigure(cnf)
+                thread_pool.submit(scheduler.run)
+                for i in range(cnf.count_executor_threads):
+                    executor.reconfigure(cnf)
+                    x = thread_pool.submit(executor.run)
 
 
 class SchedulerTest(unittest.TestCase):
