@@ -14,7 +14,7 @@ import subprocess
 from random import randrange
 
 _timeout = time.time() + 60
-    
+
 
 class ExecutorTest(unittest.TestCase):
     def setUp(self):
@@ -79,10 +79,14 @@ class ExecutorTest(unittest.TestCase):
             expected['defaults']['stdout_callback'] = 'apimon_logger'
 
             self.assertDictEqual(actual, expected)
-        
+
     def _dummy_execute(self, cmd, task):
-        command = "sleep {}".format(randrange(5,9))
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True, stderr=subprocess.STDOUT)
+        command = "sleep {}".format(randrange(5, 9))
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            shell=True,
+            stderr=subprocess.STDOUT)
         process.wait()
         if time.time() > _timeout:
             self.shutdown_event.set()
@@ -93,7 +97,7 @@ class ExecutorTest(unittest.TestCase):
             return_value="test_repo"))
     @mock.patch(
         "apimon_executor.scheduler.Scheduler.is_repo_update_necessary",
-            return_value=False)
+        return_value=False)
     @mock.patch(
         "apimon_executor.scheduler.Executor.execute")
     def test_executor_run(
@@ -124,12 +128,12 @@ class ExecutorTest(unittest.TestCase):
                 self.shutdown_event,
                 self.ignore_tasks_event,
                 cnf)
-            with ThreadPoolExecutor(max_workers=(cnf.count_executor_threads + 1)) as thread_pool:
+            with ThreadPoolExecutor(max_workers=(
+                cnf.count_executor_threads + 1)) as thread_pool:
                 scheduler.reconfigure(cnf)
                 thread_pool.submit(scheduler.run)
                 for i in range(cnf.count_executor_threads):
                     executor.reconfigure(cnf)
-                    x = thread_pool.submit(executor.run)
 
 
 class SchedulerTest(unittest.TestCase):
