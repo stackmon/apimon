@@ -1,6 +1,6 @@
 ---
 executor:
-  repo: https://githib.com/opentelekomcloud-infra/api-monitoring
+  repo: https://github.com/opentelekomcloud-infra/api-monitoring
   git_checkout_dir: wrk
   git_ref: master
   git_refresh_interval: 2
