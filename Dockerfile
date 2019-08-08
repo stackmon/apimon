@@ -25,7 +25,7 @@ ADD . /usr/app/task_executor
 
 RUN git clone https://github.com/ansible/ansible --branch stable-2.8 && \
     git clone https://review.opendev.org/openstack/openstacksdk && \
-    cd openstacksdk \
+    cd openstacksdk && \
     git fetch https://review.opendev.org/openstack/openstacksdk \
       refs/changes/41/659841/19 && git checkout FETCH_HEAD
 
