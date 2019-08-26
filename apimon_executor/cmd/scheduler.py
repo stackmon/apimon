@@ -13,6 +13,7 @@
 
 import argparse
 import os
+import sys
 
 from apimon_executor import config
 from apimon_executor import scheduler
@@ -74,6 +75,8 @@ class ApimonScheduler(object):
             scheduler.ApimonScheduler(cnf).start()
         finally:
             os.chdir(cwd)
+
+        sys.exit(0)
 
 
 def main():
