@@ -13,6 +13,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import configparser
+from distutils import dir_util
 import gzip
 import queue as _queue
 import logging
@@ -347,8 +348,8 @@ class Executor(object):
         with tempfile.TemporaryDirectory() as tmpdir:
             job_work_dir = Path(tmpdir, 'work')
             # Copy work_dir into job_work_dir
-            shutil.copytree(self._git_checkout_dir, job_work_dir,
-                            symlinks=True)
+            dir_util.copy_tree(self._git_checkout_dir, job_work_dir,
+                               preserve_symlinks=1)
             # Prepare dir for job logs
             job_log_dir = Path(self._log_dest, str(job_id[-2:]), job_id)
             job_log_dir.mkdir(parents=True, exist_ok=True)
