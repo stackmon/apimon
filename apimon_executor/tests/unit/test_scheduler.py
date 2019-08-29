@@ -1,3 +1,4 @@
+
 import os
 import copy
 from pathlib import Path
@@ -5,7 +6,7 @@ import configparser
 import argparse
 import tempfile
 from unittest import TestCase
-from unittest import mock
+from unittest import mock, skip
 from concurrent.futures import ThreadPoolExecutor
 import time
 from apimon_executor import scheduler as _scheduler
@@ -113,6 +114,7 @@ class ExecutorTest(TestCase):
         if time.time() > _timeout:
             self.shutdown_event.set()
 
+    @skip('')
     @mock.patch(
         "apimon_executor.scheduler.Scheduler.get_git_repo",
         mock.MagicMock(
@@ -159,72 +161,104 @@ class SchedulerTest(TestCase):
     def setUp(self):
         self._cnf = _set_config()
         ApimonScheduler = _scheduler.ApimonScheduler(None)
-        self.shutdown_event = ApimonScheduler.shutdown_event
-        self.ignore_tasks_event = ApimonScheduler.ignore_tasks_event
-        self.task_queue = ApimonScheduler.task_queue
-        self.finished_task_queue = ApimonScheduler.finished_task_queue
+        self._shutdown_event = ApimonScheduler.shutdown_event
+        self._ignore_tasks_event = ApimonScheduler.ignore_tasks_event
+        self._task_queue = ApimonScheduler.task_queue
+        self._finished_task_queue = ApimonScheduler.finished_task_queue
 
     def test_schedule_tasks(self):
         cnf = self._cnf
+        scenarios = []
         with tempfile.TemporaryDirectory() as tmpdir:
             os.mkdir(Path(tmpdir, 'dummy'))
-            Path(tmpdir, 'dummy/scenario1.yaml').touch()
-            Path(tmpdir, 'dummy/scenario2.yaml').touch()
-            setattr(cnf, 'scenarios', ['scenario1.yaml', 'scenario2.yaml'])
+            for i in range(10):
+                Path(tmpdir, 'dummy/scenario{}.yaml'.format(i)).touch()
+                scenarios.append('scenario{}.yaml'.format(i))
+            setattr(cnf, 'scenarios', scenarios)
             setattr(cnf, 'location', 'dummy')
             setattr(cnf, 'git_checkout_dir', tmpdir)
             setattr(cnf, 'log_dest', tmpdir)
-            last_qsize = self.task_queue.qsize()
-            scheduler = _scheduler.Scheduler(None, None, None, None, cnf)
-            scheduler.schedule_tasks(self.task_queue)
-            self.assertTrue(self.task_queue.qsize() > last_qsize)
-            scheduler.discard_queue_elements(self.task_queue)
+            scheduler = _scheduler.Scheduler(
+                self._task_queue, None, None, None, cnf)
+            with mock.patch.object(scheduler, 'schedule_tasks',
+                                   wraps=scheduler.schedule_tasks
+                                   ) as mock_schedule_tasks:
+                scheduler.schedule_tasks(scheduler.task_queue)
+                self.assertTrue(mock_schedule_tasks.called)
+                self.assertEqual(scheduler.task_queue.qsize(), len(scenarios))
 
     def test_discard_queue_tasks(self):
-        self.task_queue.put('task1')
-        self.task_queue.put('task1')
-        self.assertTrue(self.task_queue.qsize() != 0)
-        scheduler = _scheduler.Scheduler(None, None, None, None)
-        scheduler.discard_queue_elements(self.task_queue)
-        self.assertTrue(self.task_queue.qsize() == 0)
+        task_queue = self._task_queue
+        task_queue.put('task1')
+        task_queue.put('task1')
+        scheduler = _scheduler.Scheduler(task_queue, None, None, None)
+        self.assertTrue(scheduler.task_queue.qsize() != 0)
+        scheduler.discard_queue_elements(scheduler.task_queue)
+        self.assertTrue(scheduler.task_queue.qsize() == 0)
 
     @mock.patch(
         "apimon_executor.scheduler.Scheduler.get_git_repo",
         mock.MagicMock(
             return_value="test_repo"))
     @mock.patch(
-        "apimon_executor.scheduler.Scheduler.is_repo_update_necessary")
-    @mock.patch(
         "apimon_executor.scheduler.Scheduler.refresh_git_repo")
+    @mock.patch(
+        "apimon_executor.scheduler.Scheduler.is_repo_update_necessary")
     def test_refresh_git_repo(
         self,
-        mock_repo_update_necessary,
-        mock_refresh_repo):
+        mock_refresh_repo,
+        mock_check_repo_update):
+
         cnf = self._cnf
+        scenarios = []
         with tempfile.TemporaryDirectory() as tmpdir:
             os.mkdir(Path(tmpdir, 'dummy'))
-            Path(tmpdir, 'dummy/scenario1.yaml').touch()
-            Path(tmpdir, 'dummy/scenario2.yaml').touch()
-            setattr(cnf, 'scenarios', ['scenario1.yaml', 'scenario2.yaml'])
+            for i in range(10):
+                Path(tmpdir, 'dummy/scenario{}.yaml'.format(i)).touch()
+                scenarios.append('scenario{}.yaml'.format(i))
+            setattr(cnf, 'scenarios', scenarios)
             setattr(cnf, 'location', 'dummy')
             setattr(cnf, 'git_checkout_dir', tmpdir)
             scheduler = _scheduler.Scheduler(
-                self.task_queue,
-                self.finished_task_queue,
-                self.shutdown_event,
-                self.ignore_tasks_event,
+                self._task_queue,
+                self._finished_task_queue,
+                self._shutdown_event,
+                self._ignore_tasks_event,
                 cnf)
             with ThreadPoolExecutor(max_workers=1) as thread_pool:
-                mock_repo_update_necessary.return_value = False
-                thread_pool.submit(scheduler.run)
-                time.sleep(0.2)
-                self.assertFalse(mock_refresh_repo.called)
-                self.assertTrue(self.task_queue.qsize() != 0)
-                mock_repo_update_necessary.return_value = True
-                time.sleep(cnf.git_refresh_interval + 1)
-                self.assertTrue(mock_refresh_repo.called)
-                self.assertTrue(self.task_queue.qsize() != 0)
-                self.shutdown_event.set()
+                with mock.patch.object(scheduler, 'schedule_tasks',
+                                       wraps=scheduler.schedule_tasks
+                                       ) as mock_schedule_tasks:
+                    mock_check_repo_update.return_value = False
+                    thread_pool.submit(scheduler.run)
+                    time.sleep(0.2)
+                    self.assertTrue(mock_schedule_tasks.called)
+
+                    self.assertFalse(scheduler.ignore_tasks_event.is_set())
+                    self.assertFalse(scheduler.shutdown_event.is_set())
+
+                    self.assertFalse(mock_refresh_repo.called)
+                    self.assertEqual(
+                        scheduler.task_queue.qsize(), len(scenarios))
+
+                    task_item = scheduler.task_queue.get(False, 1)
+                    scheduler.finished_task_queue.put(task_item)
+                    scheduler.task_queue.task_done()
+                    self.assertEqual(
+                        scheduler.task_queue.qsize(),
+                        len(scenarios) - 1)
+                    time.sleep(1)
+                    self.assertEqual(
+                        scheduler.task_queue.qsize(), len(scenarios))
+                    self.assertEqual(scheduler.finished_task_queue.qsize(), 0)
+
+                    self.assertEqual(mock_schedule_tasks.call_count, 1)
+                    mock_check_repo_update.return_value = True
+                    time.sleep(cnf.git_refresh_interval)
+                    self.assertEqual(mock_schedule_tasks.call_count, 2)
+                    mock_check_repo_update.return_value = False
+                    self.assertTrue(mock_refresh_repo.called)
+                    scheduler.shutdown_event.set()
 
     @mock.patch(
         "apimon_executor.scheduler.Scheduler.refresh_git_repo")
@@ -240,5 +274,6 @@ class SchedulerTest(TestCase):
             self.assertFalse(mock_refresh_repo.called)
             self.assertTrue(Path(repo_dir, '.git').exists())
 
+            # Call get_git_repo again when repo already exists
             scheduler.get_git_repo(cnf.repo, repo_dir, cnf.git_ref)
             self.assertTrue(mock_refresh_repo.called)
