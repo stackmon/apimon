@@ -17,22 +17,27 @@ RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
 
 WORKDIR /usr/app
 ENV PATH=/root/.local/bin:$PATH
+RUN mkdir -p /var/log/executor
 
 COPY ./requirements.txt /usr/app/requirements.txt
+
+ADD . /usr/app/task_executor
 
 RUN git clone https://github.com/ansible/ansible --branch stable-2.8 && \
     git clone https://review.opendev.org/openstack/openstacksdk && \
     cd openstacksdk && \
     git fetch https://review.opendev.org/openstack/openstacksdk \
-      refs/changes/41/659841/19 && git checkout FETCH_HEAD
+      refs/changes/41/659841/20 && git checkout FETCH_HEAD
 
 RUN cd openstacksdk && python3 setup.py install --user
 RUN cd ansible && python3 setup.py install --user
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
+RUN cd task_executor && python3 setup.py install --user
+
 COPY ./scripts/entrypoint.sh /usr/app
-COPY ./executor/executor.py /usr/app
+#COPY ./executor/executor.py /usr/app
 
 ENV PATH=/root/.local/bin:$PATH
 
