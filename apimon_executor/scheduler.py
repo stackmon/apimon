@@ -115,6 +115,7 @@ class Scheduler(object):
         self.data = threading.local()
         if config:
             self.reconfigure(config)
+        self.sleep_time = 1
 
     def reconfigure(self, config):
         for k, v in config.__dict__.items():
@@ -175,7 +176,7 @@ class Scheduler(object):
                         break
                 except _queue.Empty:
                     pass
-                time.sleep(1)
+                time.sleep(self.sleep_time)
         except Exception:
             self.log.exception('Error occured in the scheduler thread')
         self.log.info('finishing scheduler thread')
