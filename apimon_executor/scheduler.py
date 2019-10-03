@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 import configparser
 from distutils import dir_util
 import gzip
-import queue as _queue
 import logging
 import os
 from pathlib import Path
@@ -28,9 +27,8 @@ import tempfile
 import threading
 import time
 
-from git import Repo
-
 from apimon_executor.ansible import logconfig
+from apimon_executor import queue as _queue
 
 
 def preexec_function():
@@ -50,17 +48,18 @@ class ExecutorLoggingAdapter(logging.LoggerAdapter):
             self.extra.get('job_id'), self.extra.get('task'), msg), kwargs
 
 
-def discard_queue_elements(self, queue):
-    """Simply discard all event from queue
-    """
-    self.log.debug('Discarding task from the %s due to discard '
-                   'event being set', queue)
-    while not queue.empty():
-        try:
-            queue.get(False)
-            queue.task_done()
-        except _queue.Empty:
-            pass
+class TaskItem(object):
+
+    def __init__(self, project, item):
+        self.project = project
+        self.item = item
+        self.name = project.name + '.' + item
+
+    def get_exec_cmd(self):
+        return self.project.get_exec_cmd(self.item)
+
+    def is_task_valid(self):
+        return self.project.is_task_valid(self.item)
 
 
 class ApimonScheduler(object):
@@ -70,9 +69,8 @@ class ApimonScheduler(object):
     def __init__(self, config):
         self.shutdown_event = threading.Event()
         self.pause_event = threading.Event()
-        self.ignore_tasks_event = threading.Event()
-        self.task_queue = _queue.Queue()
-        self.finished_task_queue = _queue.Queue()
+        self.task_queue = _queue.UniqueQueue()
+        self.finished_task_queue = _queue.UniqueQueue()
 
         self.config = config
 
@@ -83,8 +81,8 @@ class ApimonScheduler(object):
 
     def start(self):
         self.log.info('Starting APImon Scheduler')
-        git_checkout_dir = Path(self.config.git_checkout_dir)
-        git_checkout_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = Path(self.config.work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
         with ThreadPoolExecutor(
                 max_workers=self.config.count_executor_threads + 1) \
                 as thread_pool:
@@ -93,13 +91,13 @@ class ApimonScheduler(object):
             for i in range(self.config.count_executor_threads):
                 thread = Executor(self.task_queue, self.finished_task_queue,
                                   self.shutdown_event,
-                                  self.ignore_tasks_event)
+                                  self.pause_event)
                 thread.reconfigure(self.config)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
                                          self.shutdown_event,
-                                         self.ignore_tasks_event)
+                                         self.pause_event)
             scheduler_thread.reconfigure(self.config)
             thread_pool.submit(scheduler_thread.run)
 
@@ -109,11 +107,12 @@ class Scheduler(object):
     log = logging.getLogger('apimon_executor.scheduler')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 ignore_tasks_event, config=None):
+                 pause_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.ignore_tasks_event = ignore_tasks_event
+        self.pause_event = pause_event
+        self.data = threading.local()
         if config:
             self.reconfigure(config)
 
@@ -121,17 +120,31 @@ class Scheduler(object):
         for k, v in config.__dict__.items():
             setattr(self, '_' + k, v)
 
-    def discard_queue_elements(self, queue):
-        """Simply discard all event from queue
-        """
-        self.log.debug('Discarding task from the %s due to discard '
-                       'event being set', queue)
-        while not queue.empty():
-            try:
-                queue.get(False)
-                queue.task_done()
-            except _queue.Empty:
-                pass
+    def _init_projects(self):
+        for name, project in self._projects.items():
+            project.prepare()
+
+    def refresh_projects(self):
+        current_time = time.time()
+        # Check whether git update should be done/checked
+        if (self._refresh_interval > 0
+                and current_time >= self.get_next_refresh_time()):
+            for name, project in self._projects.items():
+                if project.is_repo_update_necessary():
+                    # Set pause event for executors not to start new stuff
+                    self.pause_event.set()
+                    project.refresh_git_repo()
+                    self.schedule_tasks(self.task_queue, project)
+                    # We can continue processing
+                    self.pause_event.clear()
+
+            self.set_next_refresh_time(time.time() + self._refresh_interval)
+
+    def get_next_refresh_time(self):
+        return self.data.next_git_refresh
+
+    def set_next_refresh_time(self, time):
+        self.data.next_git_refresh = time
 
     def run(self):
         """Scheduler function
@@ -142,36 +155,16 @@ class Scheduler(object):
         """
         self.log.info('Starting scheduler thread')
         try:
-            data = threading.local()
 
-            git_repo = self.get_git_repo(self._repo,
-                                         self._git_checkout_dir, self._git_ref)
+            self.data = threading.local()
 
-            self.schedule_tasks(self.task_queue)
-            data.next_git_refresh = time.time() + \
-                self._git_refresh_interval
+            self._init_projects()
+
+            for name, project in self._projects.items():
+                self.schedule_tasks(self.task_queue, project)
+            self.set_next_refresh_time(time.time() + self._refresh_interval)
             while not self.shutdown_event.is_set():
-                current_time = time.time()
-                # Check whether git update should be done/checked
-                if (self._git_refresh_interval > 0
-                        and current_time >= data.next_git_refresh):
-                    if self.is_repo_update_necessary(git_repo,
-                                                     self._git_ref):
-                        # Check for all current scheduled items to complete
-                        self.log.debug('Waiting for the current queue to '
-                                       'become empty')
-                        self.ignore_tasks_event.set()
-                        self.discard_queue_elements(self.task_queue)
-                        self.task_queue.join()
-                        # wait for all running tasks to complete
-                        # and then also clean the finished queue
-                        self.discard_queue_elements(self.finished_task_queue)
-                        self.ignore_tasks_event.clear()
-                        # Refresh the work_dir
-                        self.refresh_git_repo(git_repo, self._git_ref)
-                        self.schedule_tasks(self.task_queue)
-                        data.next_git_refresh = time.time() + \
-                            self._git_refresh_interval
+                self.refresh_projects()
                 # Now check the finished tasks queue and re-queue them
                 # Not blocking wait to react on shutdown
                 try:
@@ -189,58 +182,11 @@ class Scheduler(object):
         # If scheduler exits - no sense for executors to remain
         self.shutdown_event.set()
 
-    def get_git_repo(self, repo_url, work_dir, ref):
-        """Get a repository object
-        """
-        self.log.debug('Getting git repository')
-        git_path = Path(work_dir, '.git')
-        if git_path.exists():
-            repo = Repo(work_dir)
-            self.refresh_git_repo(repo, ref)
-        else:
-            repo = Repo.clone_from(repo_url, work_dir, recurse_submodules='.')
-            repo.remotes.origin.pull(ref)
-        return repo
-
-    def is_repo_update_necessary(self, repo, ref):
-        """Check whether update of the repository is necessary
-
-        Returns True, when a commit checksum remotely differs from local state
-        """
-        self.log.debug('Checking whether there are remote changes in git')
-        try:
-            repo.remotes.origin.update()
-            last_commit_remote = repo.remotes.origin.refs[ref].commit
-            last_commit_local = repo.refs[ref].commit
-            return last_commit_remote != last_commit_local
-        except Exception:
-            self.log.exception('Cannot update git remote')
-            return False
-
-    def refresh_git_repo(self, repo, ref):
-        try:
-            repo.remotes.origin.pull(ref, recurse_submodules=True)
-        except Exception:
-            self.log.exception('Cannot update repository')
-
-    def schedule_tasks(self, queue):
+    def schedule_tasks(self, queue, project):
         self.log.debug('Looking for tasks')
-        if self._scenarios:
-            for scenario in self._scenarios:
-                scenario_file = Path(self._git_checkout_dir,
-                                     self._location, scenario)
-                if scenario_file.exists():
-                    queue.put(
-                        scenario_file.relative_to(self._git_checkout_dir))
-                else:
-                    self.log.warning('Requested scenario %s does not exist',
-                                     scenario)
-        else:
-            for file in Path(
-                    self._git_checkout_dir,
-                    self._location).glob('scenario*.yaml'):
-                self.log.debug('Scheduling %s', file)
-                queue.put(file.relative_to(self._git_checkout_dir))
+        for task in project.tasks():
+            queue.put(
+                TaskItem(project=project, item=task))
 
 
 class Executor(object):
@@ -248,60 +194,62 @@ class Executor(object):
     log = logging.getLogger('apimon_executor.executor')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 ignore_tasks_event, config=None):
+                 pause_event, config=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
-        self.ignore_tasks_event = ignore_tasks_event
+        self.pause_event = pause_event
         if config:
             self.reconfigure(config)
         self.ansible_plugin_path = \
             Path(
                 Path(__file__).resolve().parent,
                 'ansible', 'callback').as_posix()
+        self.sleep_time = 3
 
     def reconfigure(self, config):
         for k, v in config.__dict__.items():
             setattr(self, '_' + k, v)
 
-    def discard_queue_elements(self, queue):
-        """Simply discard all event from queue
-        """
-        self.log.debug('Discarding task from the %s due to discard '
-                       'event being set', queue)
-        while not queue.empty():
-            try:
-                queue.get(False)
-                queue.task_done()
-            except _queue.Empty:
-                pass
-
     def run(self):
         self.log.info('Starting Executor thread')
         while not self.shutdown_event.is_set():
-            if not self.ignore_tasks_event.is_set():
+            if not self.pause_event.is_set():
                 # Not blocking wait to be able to react on shutdown
                 try:
                     task_item = self.task_queue.get(False, 1)
                     if task_item:
-                        self.log.debug('Fetched item=%s', task_item)
-                        cmd = self._exec_cmd % task_item
+                        self.log.debug('Fetched item=%s', task_item.item)
+                        if not task_item.is_task_valid():
+                            # We might have gotten task_item, which does not
+                            # exist in the repo anymore (after repo refresh).
+                            # Just inform and continue
+                            self.log.info('item %s is not valid, since it '
+                                          'doesn\'t exist anymore. Skipping' %
+                                          task_item.name)
+                            continue
+                        cmd = task_item.get_exec_cmd()
                         # job_id = str(uuid.uuid4().hex[-12:])
                         job_id = ''.join([random.choice(string.ascii_letters +
                                                         string.digits) for n in
                                           range(12)])
                         self.log.info('Starting task %s with jobId: %s', cmd,
                                       job_id)
-                        if not self._simulate:
-                            self.execute(self._exec_cmd, task_item,
-                                         job_id)
-                            pass
-                        else:
-                            # Simulate processing
-                            time.sleep(1)
-                        self.log.info('Task %s (%s) finished', cmd, job_id)
-                        self.finished_task_queue.put(task_item)
-                        self.task_queue.task_done()
+                        try:
+                            if not self._simulate:
+                                self.execute(task_item, job_id)
+                            else:
+                                # Simulate processing
+                                time.sleep(1)
+                            self.log.info('Task %s (%s) finished', cmd, job_id)
+                        except Exception as e:
+                            self.log.exception(e)
+                        finally:
+                            # Even if we had a bad exception during job
+                            # execution, try not to loose item and reschedule
+                            # it
+                            self.finished_task_queue.put(task_item)
+                            self.task_queue.task_done()
                     else:
                         break
                 except _queue.Empty:
@@ -309,7 +257,7 @@ class Executor(object):
                 except Exception:
                     self.log.exception('Exception occured during task '
                                        'processing')
-            time.sleep(3)
+            time.sleep(self.sleep_time)
         self.log.info('Finishing executor thread')
 
     def archive_log_file(self, job_log_file):
@@ -339,16 +287,17 @@ class Executor(object):
         with open(ansible_cfg, 'w') as f:
             config.write(f)
 
-    def execute(self, cmd, task, job_id=None):
+    def execute(self, task_item, job_id=None):
         """Execute the command
         """
         task_logger = logging.getLogger('apimon_executor.executor.task')
-        adapter = ExecutorLoggingAdapter(task_logger, {'task': task, 'job_id':
-                                                       job_id})
+        adapter = ExecutorLoggingAdapter(task_logger, {'task': task_item.item,
+                                                       'job_id': job_id})
         with tempfile.TemporaryDirectory() as tmpdir:
             job_work_dir = Path(tmpdir, 'work')
             # Copy work_dir into job_work_dir
-            dir_util.copy_tree(self._git_checkout_dir, job_work_dir.as_posix(),
+            dir_util.copy_tree(task_item.project.project_dir,
+                               job_work_dir.as_posix(),
                                preserve_symlinks=1)
             # Prepare dir for job logs
             job_log_dir = Path(self._log_dest, str(job_id[-2:]), job_id)
@@ -364,7 +313,7 @@ class Executor(object):
 
             self._prepare_ansible_cfg(job_work_dir)
 
-            execute_cmd = (cmd % Path(task)).split(' ')
+            execute_cmd = (task_item.get_exec_cmd()).split(' ')
 
             # Adapt job env
             env = os.environ.copy()
