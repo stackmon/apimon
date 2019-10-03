@@ -1,9 +1,11 @@
 ---
 executor:
-  repo: https://github.com/opentelekomcloud-infra/api-monitoring
-  git_checkout_dir: wrk
-  git_ref: master
-  git_refresh_interval: 2
+  projects:
+    - name: apimon
+      repo_url: https://github.com/opentelekomcloud-infra/apimon-tests
+      repo_ref: master
+      scenarios_location: playbooks
+  refresh_interval: 2
   location: playbooks/scenarios
   count_executor_threads: 8
   log_config: /usr/app/task_executor/etc/logging.conf
