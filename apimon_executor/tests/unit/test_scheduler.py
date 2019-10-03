@@ -179,11 +179,13 @@ class TestScheduler(TestCase):
         self.scheduler.finished_task_queue = _queue.UniqueQueue()
         self.scheduler._refresh_interval = 120
         self.scheduler.shutdown_event = threading.Event()
+        self.scheduler.sleep_time = 0.1
 
         try:
 
             thread = threading.Thread(target=self.scheduler.run)
             thread.start()
+            time.sleep(1)
 
             scheduled_items = set()
 
