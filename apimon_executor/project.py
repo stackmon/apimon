@@ -45,6 +45,7 @@ class Project(object):
             process = subprocess.Popen(
                 'ansible-galaxy install -r '
                 '{file}'.format(file=requirements_file.as_posix()),
+                cwd=self.work_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             # Read the output

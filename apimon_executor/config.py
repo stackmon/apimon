@@ -21,7 +21,6 @@ from apimon_executor import project
 class ExecutorConfig(object):
 
     def __init__(self, args):
-        config = {}
         self.projects = {}
 
         with open(args.config, 'r') as f:
@@ -58,7 +57,7 @@ class ExecutorConfig(object):
         self.work_dir = executor_cfg.get('work_dir', 'wrk')
 
         if os.path.exists(self.log_config):
-            with open(config['executor']['log_config']) as f:
+            with open(self.log_config) as f:
                 logging.config.fileConfig(f)
         else:
             logging.basicConfig(level=logging.INFO)
