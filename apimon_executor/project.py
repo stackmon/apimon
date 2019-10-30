@@ -44,8 +44,8 @@ class Project(object):
                 requirements_file.exists()):
             process = subprocess.Popen(
                 'ansible-galaxy install -r '
-                '{file}'.format(file=requirements_file.as_posix()),
-                cwd=self.work_dir,
+                '{file}'.format(file=requirements_file.as_posix()).split(' '),
+                cwd=Path(self.work_dir).resolve(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             # Read the output
@@ -61,13 +61,13 @@ class Project(object):
         self.log.debug('Getting git repository: %s' % self.repo_url)
         git_path = Path(self.project_dir, '.git')
         if git_path.exists():
-            repo = Repo(self.project_dir)
-            self.refresh_git_repo(repo, self.repo_ref)
+            self.repo = Repo(self.project_dir)
+            self.refresh_git_repo()
         else:
-            repo = Repo.clone_from(self.repo_url, self.project_dir,
-                                   recurse_submodules='.')
-            repo.remotes.origin.pull(self.repo_ref)
-        return repo
+            self.repo = Repo.clone_from(self.repo_url, self.project_dir,
+                                        recurse_submodules='.')
+            self.repo.remotes.origin.pull(self.repo_ref)
+        return self.repo
 
     def refresh_git_repo(self):
         try:

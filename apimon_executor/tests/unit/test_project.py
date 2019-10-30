@@ -107,8 +107,8 @@ class TestProject(TestCase):
                 prj.prepare()
                 process_mock.assert_called_with(
                     'ansible-galaxy install -r {file}'.format(
-                        file=requirements_file),
-                    cwd=tmp_dir,
+                        file=requirements_file).split(' '),
+                    cwd=Path(tmp_dir).resolve(),
                     stdout=-1, stderr=-1
                 )
 
