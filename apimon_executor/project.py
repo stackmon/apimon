@@ -58,7 +58,7 @@ class Project(object):
     def get_git_repo(self):
         """Get a repository object
         """
-        self.log.debug('Getting git repository')
+        self.log.debug('Getting git repository: %s' % self.repo_url)
         git_path = Path(self.project_dir, '.git')
         if git_path.exists():
             repo = Repo(self.project_dir)
