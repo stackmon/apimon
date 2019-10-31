@@ -11,7 +11,6 @@
 # under the License.
 
 import logging
-import logging.config
 import subprocess
 
 from pathlib import Path
@@ -44,8 +43,7 @@ class Project(object):
                 requirements_file.exists()):
             process = subprocess.Popen(
                 'ansible-galaxy install -r '
-                '{file}'.format(file=requirements_file.as_posix()).split(' '),
-                cwd=Path(self.work_dir).resolve(),
+                '{file}'.format(file=requirements_file.resolve()).split(' '),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE)
             # Read the output
@@ -96,7 +94,7 @@ class Project(object):
 
     def tasks(self):
         self.log.debug('Looking for tasks')
-        if hasattr(self, 'scenarios'):
+        if hasattr(self, 'scenarios') and self.scenarios:
             for scenario in self.scenarios:
                 scenario_file = Path(self.project_dir,
                                      self.tests_location, scenario)

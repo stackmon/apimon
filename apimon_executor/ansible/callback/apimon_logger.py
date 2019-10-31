@@ -328,7 +328,7 @@ class CallbackModule(CallbackBase):
             else:
                 self._log_message(
                     result=result,
-                    msg=json.dumps(result_dict['item'],
+                    msg=json.dumps(result_dict,
                                    indent=2, sort_keys=True),
                     status=status)
         else:

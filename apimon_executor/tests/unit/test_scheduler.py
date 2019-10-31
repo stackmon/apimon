@@ -333,8 +333,8 @@ class TestExecutor(TestCase):
                 Path(job_log_dir, 'job-output.txt'))
 
             self.executor.upload_log_file_to_swift.assert_called_with(
-                job_id,
-                Path(job_log_dir, 'job-output.txt')
+                Path(job_log_dir, 'job-output.txt'),
+                job_id
             )
 
     def test_run(self):

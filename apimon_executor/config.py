@@ -40,7 +40,8 @@ class ExecutorConfig(object):
                 exec_cmd=item.get('exec_cmd', 'ansible-playbook -i '
                                   'inventory/testing %s'),
                 work_dir=self.work_dir,
-                env=item.get('env')
+                env=item.get('env'),
+                scenarios=item.get('scenarios')
             )
             self.projects[prj.name] = prj
 

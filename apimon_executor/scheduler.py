@@ -90,9 +90,12 @@ class ApimonScheduler(object):
         container = connection.object_store.create_container(
             name=container_name)
         container.set_metadata(
-            read_ACL='.r:*,.rlistings',
-            web_index='index.html',
-            web_listings='True'
+            connection.object_store,
+            metadata={
+                'read_ACL': '.r:*,.rlistings',
+                'web_index': 'index.html',
+                'web_listings': 'True'
+            }
         )
         self.container = container
 
@@ -298,12 +301,19 @@ class Executor(object):
         if self.logs_cloud and job_log_file.exists():
             # Due to bug in OTC we need to read the file content
             log_data = open(job_log_file, 'r').read()
-            self.logs_cloud.object_store.create_object(
-                name='{suffix}{id}{name}'.format(
-                    suffix=str(job_id[-2:]),
-                    id=job_id,
-                    name=job_log_file.name),
-                data=log_data)
+            try:
+                obj = self.logs_cloud.object_store.create_object(
+                    container=self._logs_container_name,
+                    name='{suffix}/{id}/{name}'.format(
+                        suffix=str(job_id[-2:]),
+                        id=job_id,
+                        name=job_log_file.name),
+                    data=log_data)
+                obj.set_metadata(
+                    self.logs_cloud.object_store,
+                    metadata={'delete-after': '1209600'})
+            except openstack.SDKException:
+                self.log.exception('Error uploading log to Swift')
 
     def _prepare_ansible_cfg(self, work_dir):
         config = configparser.ConfigParser()
@@ -373,6 +383,6 @@ class Executor(object):
             # Wait for child process to finish
             process.wait()
 
-            self.upload_log_file_to_swift(job_id, job_log_file)
+            self.upload_log_file_to_swift(job_log_file, job_id)
 
             self.archive_log_file(job_log_file)
