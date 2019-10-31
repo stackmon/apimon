@@ -12,6 +12,7 @@ import shutil
 import uuid
 import yaml
 
+
 from apimon_executor import scheduler as _scheduler
 from apimon_executor import config as _config
 from apimon_executor import queue as _queue
@@ -68,16 +69,20 @@ class TestApimonScheduler(TestCase):
     def setUp(self):
         super(TestApimonScheduler, self).setUp()
         self.config = mock.Mock()
+        self.config.logs_cloud = 'fake'
 
-    def test_init(self):
+    @mock.patch('openstack.connect')
+    def test_init(self, os_mock):
         scheduler = _scheduler.ApimonScheduler(self.config)
         self.assertEqual(self.config, scheduler.config)
 
         self.assertTrue(isinstance(scheduler.task_queue, _queue.UniqueQueue))
         self.assertTrue(isinstance(
             scheduler.finished_task_queue, _queue.UniqueQueue))
+        os_mock.assert_called_with('fake')
 
-    def test_signal_handler(self):
+    @mock.patch('openstack.connect')
+    def test_signal_handler(self, os_mock):
         scheduler = _scheduler.ApimonScheduler(self.config)
         with self.assertLogs('apimon_executor', level='INFO') as cm:
             scheduler.signal_handler(1, 1)
@@ -294,6 +299,7 @@ class TestExecutor(TestCase):
             prepare_mock = mock.Mock()
             self.executor._prepare_ansible_cfg = prepare_mock
             self.executor.archive_log_file = mock.Mock()
+            self.executor.upload_log_file_to_swift = mock.Mock()
             self.executor.execute(_scheduler.TaskItem(p1, 'p1_t1'),
                                   job_id)
 
@@ -325,6 +331,11 @@ class TestExecutor(TestCase):
 
             self.executor.archive_log_file.assert_called_with(
                 Path(job_log_dir, 'job-output.txt'))
+
+            self.executor.upload_log_file_to_swift.assert_called_with(
+                job_id,
+                Path(job_log_dir, 'job-output.txt')
+            )
 
     def test_run(self):
         p1 = mock.Mock()

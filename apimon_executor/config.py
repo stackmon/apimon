@@ -39,7 +39,8 @@ class ExecutorConfig(object):
                 location=item.get('scenarios_location', 'playbooks'),
                 exec_cmd=item.get('exec_cmd', 'ansible-playbook -i '
                                   'inventory/testing %s'),
-                work_dir=self.work_dir
+                work_dir=self.work_dir,
+                env=item.get('env')
             )
             self.projects[prj.name] = prj
 
@@ -54,7 +55,10 @@ class ExecutorConfig(object):
             'count_executor_threads',
             getattr(args, 'count_executor_threads', 5))
         self.refresh_interval = executor_cfg.get('refresh_interval', 120)
-        self.work_dir = executor_cfg.get('work_dir', 'wrk')
+
+        self.logs_cloud = executor_cfg.get('log_cloud_name')
+        self.logs_container_name = executor_cfg.get(
+            'log_container_name')
 
         if os.path.exists(self.log_config):
             with open(self.log_config) as f:

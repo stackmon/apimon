@@ -27,6 +27,8 @@ import tempfile
 import threading
 import time
 
+import openstack
+
 from apimon_executor.ansible import logconfig
 from apimon_executor import queue as _queue
 
@@ -74,15 +76,33 @@ class ApimonScheduler(object):
 
         self.config = config
 
+        self.logs_cloud = None
+
+        if config.logs_cloud is not None:
+            self.logs_cloud = openstack.connect(config.logs_cloud)
+
     def signal_handler(self, signum, frame):
         # Raise shutdown event
         self.log.info('Signal received. Gracefully stop processing')
         self.shutdown_event.set()
 
+    def create_logs_container(self, connection, container_name):
+        container = connection.object_store.create_container(
+            name=container_name)
+        container.set_metadata(
+            read_ACL='.r:*,.rlistings',
+            web_index='index.html',
+            web_listings='True'
+        )
+        self.container = container
+
     def start(self):
         self.log.info('Starting APImon Scheduler')
         work_dir = Path(self.config.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
+        if self.logs_cloud and self.config.logs_container_name:
+            self.create_logs_container(self.logs_cloud,
+                                       self.config.logs_container_name)
         with ThreadPoolExecutor(
                 max_workers=self.config.count_executor_threads + 1) \
                 as thread_pool:
@@ -91,14 +111,15 @@ class ApimonScheduler(object):
             for i in range(self.config.count_executor_threads):
                 thread = Executor(self.task_queue, self.finished_task_queue,
                                   self.shutdown_event,
-                                  self.pause_event)
-                thread.reconfigure(self.config)
+                                  self.pause_event,
+                                  self.config,
+                                  self.logs_cloud)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
                                          self.shutdown_event,
-                                         self.pause_event)
-            scheduler_thread.reconfigure(self.config)
+                                         self.pause_event,
+                                         self.config)
             thread_pool.submit(scheduler_thread.run)
 
 
@@ -195,7 +216,7 @@ class Executor(object):
     log = logging.getLogger('apimon_executor.executor')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 pause_event, config=None):
+                 pause_event, config=None, logs_cloud=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
@@ -206,6 +227,7 @@ class Executor(object):
             Path(
                 Path(__file__).resolve().parent,
                 'ansible', 'callback').as_posix()
+        self.logs_cloud = logs_cloud
         self.sleep_time = 3
 
     def reconfigure(self, config):
@@ -271,6 +293,17 @@ class Executor(object):
 
             # Now remove the job log, since we archived it
             job_log_file.unlink()
+
+    def upload_log_file_to_swift(self, job_log_file, job_id):
+        if self.logs_cloud and job_log_file.exists():
+            # Due to bug in OTC we need to read the file content
+            log_data = open(job_log_file, 'r').read()
+            self.logs_cloud.object_store.create_object(
+                name='{suffix}{id}{name}'.format(
+                    suffix=str(job_id[-2:]),
+                    id=job_id,
+                    name=job_log_file.name),
+                data=log_data)
 
     def _prepare_ansible_cfg(self, work_dir):
         config = configparser.ConfigParser()
@@ -339,5 +372,7 @@ class Executor(object):
 
             # Wait for child process to finish
             process.wait()
+
+            self.upload_log_file_to_swift(job_id, job_log_file)
 
             self.archive_log_file(job_log_file)

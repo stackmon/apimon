@@ -27,7 +27,9 @@ class TestConfig(TestCase):
                 }],
                 'work_dir': 'wrk',
                 'refresh_interval': 2,
-                'count_executor_threads': 8
+                'count_executor_threads': 8,
+                'log_cloud_name': '9',
+                'log_container_name': '10'
             }
         }
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -39,7 +41,10 @@ class TestConfig(TestCase):
             return config.ExecutorConfig(self.args)
 
     def test_default(self):
-        self._get_config()
+        cfg = self._get_config()
+
+        self.assertEqual('9', cfg.logs_cloud)
+        self.assertEqual('10', cfg.logs_container_name)
 
     def test_config_no_log_config(self):
         pass
