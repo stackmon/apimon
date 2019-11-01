@@ -308,11 +308,13 @@ class Executor(object):
                         suffix=str(job_id[-2:]),
                         id=job_id,
                         name=job_log_file.name),
-                    data=log_data,
-                    content_type='text/plain')
+                    data=log_data)
                 obj.set_metadata(
                     self.logs_cloud.object_store,
-                    metadata={'delete-after': '1209600'})
+                    metadata={
+                        'delete-after': '1209600',
+                        'content_type': 'text/plain'
+                    })
             except openstack.SDKException:
                 self.log.exception('Error uploading log to Swift')
 
