@@ -304,8 +304,7 @@ class Executor(object):
             try:
                 obj = self.logs_cloud.object_store.create_object(
                     container=self._logs_container_name,
-                    name='{suffix}/{id}/{name}'.format(
-                        suffix=str(job_id[-2:]),
+                    name='{id}/{name}'.format(
                         id=job_id,
                         name=job_log_file.name),
                     data=log_data)
