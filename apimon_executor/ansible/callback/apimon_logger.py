@@ -518,7 +518,6 @@ class CallbackModule(CallbackBase):
                 result, status='MODULE FAILURE',
                 msg=result_dict['module_stderr'])
 
-
     def _get_hostname(self, result):
         delegated_vars = result._result.get('_ansible_delegated_vars', None)
         if delegated_vars:
