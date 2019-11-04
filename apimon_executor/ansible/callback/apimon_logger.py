@@ -77,20 +77,6 @@ class CallbackModule(CallbackBase):
             else:
                 self._display.display(msg)
 
-    def _log_module_failure(self, result, result_dict):
-        if 'module_stdout' in result_dict and result_dict['module_stdout']:
-            self._log(
-                result, status='MODULE FAILURE',
-                msg=result_dict['module_stdout'])
-        elif 'exception' in result_dict and result_dict['exception']:
-            self._log(
-                result, status='MODULE FAILURE',
-                msg=result_dict['exception'])
-        elif 'module_stderr' in result_dict:
-            self._log(
-                result, status='MODULE FAILURE',
-                msg=result_dict['module_stderr'])
-
     def v2_playbook_on_start(self, playbook):
         self._playbook_name = os.path.splitext(playbook._file_name)[0]
 
@@ -517,6 +503,21 @@ class CallbackModule(CallbackBase):
             result_string = json.dumps(result_dict, indent=2, sort_keys=True)
             for line in result_string.split('\n'):
                 self._log("{host} | {line}".format(host=hostname, line=line))
+
+    def _log_module_failure(self, result, result_dict):
+        if 'module_stdout' in result_dict and result_dict['module_stdout']:
+            self._log_message(
+                result, status='MODULE FAILURE',
+                msg=result_dict['module_stdout'])
+        elif 'exception' in result_dict and result_dict['exception']:
+            self._log_message(
+                result, status='MODULE FAILURE',
+                msg=result_dict['exception'])
+        elif 'module_stderr' in result_dict:
+            self._log_message(
+                result, status='MODULE FAILURE',
+                msg=result_dict['module_stderr'])
+
 
     def _get_hostname(self, result):
         delegated_vars = result._result.get('_ansible_delegated_vars', None)
