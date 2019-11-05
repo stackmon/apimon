@@ -69,7 +69,7 @@ class TestApimonScheduler(TestCase):
     def setUp(self):
         super(TestApimonScheduler, self).setUp()
         self.config = mock.Mock()
-        self.config.logs_cloud = 'fake'
+        self.config.log_swift_cloud = 'fake'
 
     @mock.patch('openstack.connect')
     def test_init(self, os_mock):
@@ -230,6 +230,8 @@ class TestExecutor(TestCase):
             'p1': mock.MagicMock(),
             'p2': mock.MagicMock()
         }
+        self.config.log_fs_keep = True
+        self.config.log_fs_archive = True
         self.task_queue = mock.Mock()
         self.finished_task_queue = mock.Mock()
         self.shutdown_event = mock.Mock()
@@ -295,6 +297,7 @@ class TestExecutor(TestCase):
             p1.name = 'p1'
             p1.project_dir = prj_dir
             p1.get_exec_cmd.return_value = 'fake_cmd fake_arg1 fake_arg2'
+            p1.env = {'a': 'b'}
             job_id = uuid.uuid4().hex
             prepare_mock = mock.Mock()
             self.executor._prepare_ansible_cfg = prepare_mock
@@ -317,6 +320,7 @@ class TestExecutor(TestCase):
             env['ANSIBLE_CALLBACK_PLUGINS'] = self.executor.ansible_plugin_path
             env['APIMON_EXECUTOR_JOB_CONFIG'] = Path(job_work_dir,
                                                      'logging.json').as_posix()
+            env['a'] = 'b'
 
             # Remove dir with log output
             shutil.rmtree(job_log_dir.as_posix())

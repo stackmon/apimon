@@ -18,7 +18,7 @@ class TestConfig(TestCase):
     def _get_config(self, **attrs):
         config_dict = {
             'executor': {
-                'projects': [{
+                'test_projects': [{
                     'name': 'apimon',
                     'repo_url':
                     'https://github.com/opentelekomcloud-infra/apimon-tests',
@@ -28,8 +28,18 @@ class TestConfig(TestCase):
                 'work_dir': 'wrk',
                 'refresh_interval': 2,
                 'count_executor_threads': 8,
-                'log_cloud_name': '9',
-                'log_container_name': '10'
+                'log': {
+                    'swift': {
+                        'cloud_name': '9',
+                        'container_name': '10',
+                        'keep_seconds': 11
+                    },
+                    'fs': {
+                        'dest': '12',
+                        'archive': False,
+                        'keep': True
+                    }
+                }
             }
         }
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -43,8 +53,12 @@ class TestConfig(TestCase):
     def test_default(self):
         cfg = self._get_config()
 
-        self.assertEqual('9', cfg.logs_cloud)
-        self.assertEqual('10', cfg.logs_container_name)
+        self.assertEqual('9', cfg.log_swift_cloud)
+        self.assertEqual('10', cfg.log_swift_container_name)
+        self.assertEqual(11, cfg.log_swift_keep_time)
+        self.assertEqual('12', cfg.log_dest)
+        self.assertEqual(True, cfg.log_fs_keep)
+        self.assertEqual(False, cfg.log_fs_archive)
 
     def test_config_no_log_config(self):
         pass

@@ -78,8 +78,8 @@ class ApimonScheduler(object):
 
         self.logs_cloud = None
 
-        if config.logs_cloud is not None:
-            self.logs_cloud = openstack.connect(config.logs_cloud)
+        if config.log_swift_cloud is not None:
+            self.logs_cloud = openstack.connect(config.log_swift_cloud)
 
     def signal_handler(self, signum, frame):
         # Raise shutdown event
@@ -103,9 +103,9 @@ class ApimonScheduler(object):
         self.log.info('Starting APImon Scheduler')
         work_dir = Path(self.config.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
-        if self.logs_cloud and self.config.logs_container_name:
+        if self.logs_cloud and self.config.log_swift_container_name:
             self.create_logs_container(self.logs_cloud,
-                                       self.config.logs_container_name)
+                                       self.config.log_swift_container_name)
         with ThreadPoolExecutor(
                 max_workers=self.config.count_executor_threads + 1) \
                 as thread_pool:
@@ -116,7 +116,7 @@ class ApimonScheduler(object):
                                   self.shutdown_event,
                                   self.pause_event,
                                   self.config,
-                                  self.logs_cloud)
+                                  self.log_swift_cloud)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
@@ -303,7 +303,7 @@ class Executor(object):
             log_data = open(job_log_file, 'r').read()
             try:
                 obj = self.logs_cloud.object_store.create_object(
-                    container=self._logs_container_name,
+                    container=self._log_swift_container_name,
                     name='{id}/{name}'.format(
                         id=job_id,
                         name=job_log_file.name),
@@ -311,7 +311,7 @@ class Executor(object):
                 obj.set_metadata(
                     self.logs_cloud.object_store,
                     metadata={
-                        'delete-after': '1209600',
+                        'delete-after': self._log_swift_keep_time,
                         'content_type': 'text/plain'
                     })
             except openstack.SDKException:
@@ -367,6 +367,8 @@ class Executor(object):
             env['ANSIBLE_CALLBACK_PLUGINS'] = \
                 self.ansible_plugin_path
             env['APIMON_EXECUTOR_JOB_CONFIG'] = job_log_config_file
+            for k, v in task_item.project.env.items():
+                env[k] = v
 
             process = subprocess.Popen(execute_cmd, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE,
@@ -387,4 +389,8 @@ class Executor(object):
 
             self.upload_log_file_to_swift(job_log_file, job_id)
 
-            self.archive_log_file(job_log_file)
+            if self._log_fs_keep:
+                if self._log_fs_archive:
+                    self.archive_log_file(job_log_file)
+            else:
+                job_log_file.unlink()

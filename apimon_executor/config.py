@@ -30,7 +30,7 @@ class ExecutorConfig(object):
 
         self.work_dir = executor_cfg.get('work_dir', 'wrk')
 
-        for item in executor_cfg.get('projects', {}):
+        for item in executor_cfg.get('test_projects', {}):
             prj = project.Project(
                 name=item.get('name'),
                 repo_url=item.get('repo_url'),
@@ -47,19 +47,34 @@ class ExecutorConfig(object):
 
         self.simulate = executor_cfg.get('simulate',
                                          getattr(args, 'simulate', False))
-        self.log_config = executor_cfg.get(
+        log_config = executor_cfg.get('log', {})
+        self.log_config = log_config.get(
             'log_config',
             '/usr/app/task_executor/etc/logging.conf')
-        self.log_dest = executor_cfg.get('log_dest',
-                                         '/var/log/executor/logs')
+        log_fs_config = log_config.get('fs', {})
+        self.log_dest = log_fs_config.get(
+            'dest', '/var/log/executor/logs')
+        self.log_fs_archive = log_fs_config.get(
+            'archive', True)
+        self.log_fs_keep = log_fs_config.get(
+            'keep', False)
+        log_swift_config = log_config.get('swift')
+        self.log_swift_cloud = None
+        if log_swift_config:
+            self.log_swift_cloud = log_swift_config.get('cloud_name')
+            self.log_swift_container_name = log_swift_config.get(
+                'container_name')
+            self.log_swift_keep_time = int(log_swift_config.get(
+                'keep_seconds', 1209600))
+
         self.count_executor_threads = executor_cfg.get(
             'count_executor_threads',
             getattr(args, 'count_executor_threads', 5))
         self.refresh_interval = executor_cfg.get('refresh_interval', 120)
 
-        self.logs_cloud = executor_cfg.get('log_cloud_name')
-        self.logs_container_name = executor_cfg.get(
-            'log_container_name')
+        # self.logs_cloud = executor_cfg.get('log_cloud_name')
+        # self.logs_container_name = executor_cfg.get(
+        #     'log_container_name')
 
         if os.path.exists(self.log_config):
             with open(self.log_config) as f:
