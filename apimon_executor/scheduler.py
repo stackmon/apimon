@@ -116,7 +116,7 @@ class ApimonScheduler(object):
                                   self.shutdown_event,
                                   self.pause_event,
                                   self.config,
-                                  self.config.log_swift_cloud)
+                                  self.logs_cloud)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
