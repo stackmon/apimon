@@ -72,10 +72,6 @@ class ExecutorConfig(object):
             getattr(args, 'count_executor_threads', 5))
         self.refresh_interval = executor_cfg.get('refresh_interval', 120)
 
-        # self.logs_cloud = executor_cfg.get('log_cloud_name')
-        # self.logs_container_name = executor_cfg.get(
-        #     'log_container_name')
-
         if os.path.exists(self.log_config):
             with open(self.log_config) as f:
                 logging.config.fileConfig(f)
