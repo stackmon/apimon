@@ -51,14 +51,15 @@ class ExecutorConfig(object):
         self.log_config = log_config.get(
             'log_config',
             '/usr/app/task_executor/etc/logging.conf')
-        log_fs_config = log_config.get('fs', {})
+        job_logs_config = log_config.get('jobs')
+        log_fs_config = job_logs_config.get('fs', {})
         self.log_dest = log_fs_config.get(
             'dest', '/var/log/executor/logs')
         self.log_fs_archive = log_fs_config.get(
             'archive', True)
         self.log_fs_keep = log_fs_config.get(
             'keep', False)
-        log_swift_config = log_config.get('swift')
+        log_swift_config = job_logs_config.get('swift')
         self.log_swift_cloud = None
         if log_swift_config:
             self.log_swift_cloud = log_swift_config.get('cloud_name')

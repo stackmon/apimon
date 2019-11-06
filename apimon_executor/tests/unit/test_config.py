@@ -29,15 +29,17 @@ class TestConfig(TestCase):
                 'refresh_interval': 2,
                 'count_executor_threads': 8,
                 'log': {
-                    'swift': {
-                        'cloud_name': '9',
-                        'container_name': '10',
-                        'keep_seconds': 11
-                    },
-                    'fs': {
-                        'dest': '12',
-                        'archive': False,
-                        'keep': True
+                    'jobs': {
+                        'swift': {
+                            'cloud_name': '9',
+                            'container_name': '10',
+                            'keep_seconds': 11
+                        },
+                        'fs': {
+                            'dest': '12',
+                            'archive': False,
+                            'keep': True
+                        }
                     }
                 }
             }
