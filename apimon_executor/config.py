@@ -12,42 +12,69 @@
 
 import logging
 import logging.config
+import os
 import yaml
+
+from apimon_executor import project
 
 
 class ExecutorConfig(object):
 
     def __init__(self, args):
-        config = {}
+        self.projects = {}
 
-        if hasattr(args, 'config') and args.config:
-            with open(args.config) as f:
-                config = yaml.load(f, Loader=yaml.SafeLoader)
-        else:
-            config['executor'] = {
-                'git_checkout_dir': 'wrk',
-                'location': 'playbooks/scenarios',
-                'git_ref': 'master',
-                'git_refresh_interval': 120,
-                'count_executor_threads': 5,
-                'exec_cmd': 'ansible-playbook -i inventory/testing',
-                'log_dest': '/var/log/executor/logs',
-                'log_config': '/usr/app/task_executor/etc/logging.conf',
-                'simulate': False
-            }
+        with open(args.config, 'r') as f:
+            global_config = yaml.load(f, Loader=yaml.SafeLoader)
+        if 'executor' in global_config:
+            executor_cfg = global_config['executor']
 
-        if 'log_config' in config['executor']:
-            with open(config['executor']['log_config']) as f:
+        self.work_dir = executor_cfg.get('work_dir', 'wrk')
+
+        for item in executor_cfg.get('test_projects', {}):
+            prj = project.Project(
+                name=item.get('name'),
+                repo_url=item.get('repo_url'),
+                repo_ref=item.get('repo_ref', 'master'),
+                project_type=item.get('type', 'ansible'),
+                location=item.get('scenarios_location', 'playbooks'),
+                exec_cmd=item.get('exec_cmd', 'ansible-playbook -i '
+                                  'inventory/testing %s'),
+                work_dir=self.work_dir,
+                env=item.get('env'),
+                scenarios=item.get('scenarios')
+            )
+            self.projects[prj.name] = prj
+
+        self.simulate = executor_cfg.get('simulate',
+                                         getattr(args, 'simulate', False))
+        log_config = executor_cfg.get('log', {})
+        self.log_config = log_config.get(
+            'log_config',
+            '/usr/app/task_executor/etc/logging.conf')
+        job_logs_config = log_config.get('jobs')
+        log_fs_config = job_logs_config.get('fs', {})
+        self.log_dest = log_fs_config.get(
+            'dest', '/var/log/executor/logs')
+        self.log_fs_archive = log_fs_config.get(
+            'archive', True)
+        self.log_fs_keep = log_fs_config.get(
+            'keep', False)
+        log_swift_config = job_logs_config.get('swift')
+        self.log_swift_cloud = None
+        if log_swift_config:
+            self.log_swift_cloud = log_swift_config.get('cloud_name')
+            self.log_swift_container_name = log_swift_config.get(
+                'container_name')
+            self.log_swift_keep_time = int(log_swift_config.get(
+                'keep_seconds', 1209600))
+
+        self.count_executor_threads = executor_cfg.get(
+            'count_executor_threads',
+            getattr(args, 'count_executor_threads', 5))
+        self.refresh_interval = executor_cfg.get('refresh_interval', 120)
+
+        if os.path.exists(self.log_config):
+            with open(self.log_config) as f:
                 logging.config.fileConfig(f)
         else:
             logging.basicConfig(level=logging.INFO)
-
-        for key in ['repo', 'location', 'git_checkout_dir', 'git_ref',
-                    'log_config', 'scenarios', 'log_dest',
-                    'count_executor_threads', 'git_refresh_interval']:
-            val = getattr(args, key, None)
-            if not val:
-                val = config['executor'].get(key)
-            setattr(self, key, val)
-        setattr(self, 'exec_cmd', 'ansible-playbook -i inventory/testing %s')
-        setattr(self, 'simulate', bool(config['executor'].get('simulate')))

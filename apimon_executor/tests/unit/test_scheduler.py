@@ -1,19 +1,22 @@
 
 import os
-import copy
 from pathlib import Path
 import configparser
 import argparse
 import tempfile
-from unittest import TestCase
-from unittest import mock, skip
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from unittest import TestCase, mock
+from mock import call
 import time
+import shutil
+import uuid
+import yaml
+
+
 from apimon_executor import scheduler as _scheduler
 from apimon_executor import config as _config
-import subprocess
-from random import randrange
-import yaml
+from apimon_executor import queue as _queue
+
 
 _timeout = time.time() + 10
 
@@ -39,241 +42,351 @@ def _set_config():
         return _config.ExecutorConfig(args)
 
 
-class ExecutorTest(TestCase):
+class TestTaskItem(TestCase):
+
     def setUp(self):
-        self._cnf = _set_config()
-        ApimonScheduler = _scheduler.ApimonScheduler(None)
-        self.shutdown_event = ApimonScheduler.shutdown_event
-        self.ignore_tasks_event = ApimonScheduler.ignore_tasks_event
-        self.task_queue = ApimonScheduler.task_queue
-        self.finished_task_queue = ApimonScheduler.finished_task_queue
+        super(TestTaskItem, self).setUp()
+        self.prj = mock.Mock()
+        self.prj.name = 'fake_project'
+        self.item = _scheduler.TaskItem(self.prj, 'fake_item')
 
-    def test_prepare_ansible_cfg_no_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_file = Path(tmpdir, 'ansible.cfg')
+    def test_default(self):
+        self.assertEqual(self.prj, self.item.project)
+        self.assertEqual('fake_item', self.item.item)
+        self.assertEqual('fake_project.fake_item', self.item.name)
 
-            self.assertFalse(config_file.exists())
-            executor = _scheduler.Executor(None, None, None, None)
+    def test_get_exec_cmd(self):
+        self.item.get_exec_cmd()
+        self.prj.get_exec_cmd.assert_called_with(self.item.item)
 
-            executor._prepare_ansible_cfg(tmpdir)
-
-            self.assertTrue(config_file.exists())
-
-            config = configparser.ConfigParser()
-
-            config.read(config_file)
-
-            self.assertEqual(config['defaults']['stdout_callback'],
-                             'apimon_logger')
-
-    def test_prepare_ansible_cfg_override_config(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-
-            config_file = Path(tmpdir, 'ansible.cfg')
-
-            precond = {
-                'defaults': {
-                    'stdout_callback': 'fake',
-                    'callback_whitelist': 'a1,a2,a3'
-                },
-                'fake_section': {
-                    'fake_key': 'fake_val'
-                }
-            }
-
-            executor = _scheduler.Executor(None, None, None, None)
-
-            config = configparser.ConfigParser()
-            config.read_dict(precond)
-            with open(Path(tmpdir, 'ansible.cfg'), 'w') as f:
-                config.write(f)
-
-            executor._prepare_ansible_cfg(tmpdir)
-
-            self.assertTrue(config_file.exists())
-
-            config = configparser.ConfigParser()
-
-            config.read(config_file)
-
-            actual = {s: dict(config.items(s)) for s in config.sections()}
-
-            expected = copy.deepcopy(precond)
-            expected['defaults']['stdout_callback'] = 'apimon_logger'
-
-            self.assertDictEqual(actual, expected)
-
-    def _dummy_execute(self, cmd, task):
-        command = "time.sleep {}".format(randrange(5, 9))
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            shell=True,
-            stderr=subprocess.STDOUT)
-        process.wait()
-        if time.time() > _timeout:
-            self.shutdown_event.set()
-
-    @skip('')
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.get_git_repo",
-        mock.MagicMock(
-            return_value="test_repo"))
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.is_repo_update_necessary",
-        return_value=False)
-    @mock.patch(
-        "apimon_executor.scheduler.Executor.execute")
-    def test_executor_run(
-        self,
-        mock_repo_update_necessary,
-        mock_cmd_execute):
-        cnf = self._cnf
-        mock_cmd_execute.side_effect = self._dummy_execute
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.mkdir(Path(tmpdir, 'dummy'))
-            Path(tmpdir, 'dummy/scenario1.yaml').touch()
-            Path(tmpdir, 'dummy/scenario2.yaml').touch()
-            setattr(cnf, 'scenarios', ['scenario1.yaml', 'scenario2.yaml'])
-            setattr(cnf, 'location', 'dummy')
-            setattr(cnf, 'git_checkout_dir', tmpdir)
-
-            scheduler = _scheduler.Scheduler(
-                self.task_queue,
-                self.finished_task_queue,
-                self.shutdown_event,
-                self.ignore_tasks_event,
-                cnf)
-            with ThreadPoolExecutor(max_workers=(
-                cnf.count_executor_threads + 1)) as thread_pool:
-                thread_pool.submit(scheduler.run)
-                for i in range(cnf.count_executor_threads):
-                    executor = _scheduler.Executor(
-                        self.task_queue,
-                        self.finished_task_queue,
-                        self.shutdown_event,
-                        self.ignore_tasks_event,
-                        cnf)
-                    thread_pool.submit(executor.run)
+    def test_is_task_valid(self):
+        self.item.is_task_valid()
+        self.prj.is_task_valid.assert_called_with(self.item.item)
 
 
-class SchedulerTest(TestCase):
+class TestApimonScheduler(TestCase):
+
     def setUp(self):
-        self._cnf = _set_config()
-        ApimonScheduler = _scheduler.ApimonScheduler(None)
-        self._shutdown_event = ApimonScheduler.shutdown_event
-        self._ignore_tasks_event = ApimonScheduler.ignore_tasks_event
-        self._task_queue = ApimonScheduler.task_queue
-        self._finished_task_queue = ApimonScheduler.finished_task_queue
+        super(TestApimonScheduler, self).setUp()
+        self.config = mock.Mock()
+        self.config.log_swift_cloud = 'fake'
+
+    @mock.patch('openstack.connect')
+    def test_init(self, os_mock):
+        scheduler = _scheduler.ApimonScheduler(self.config)
+        self.assertEqual(self.config, scheduler.config)
+
+        self.assertTrue(isinstance(scheduler.task_queue, _queue.UniqueQueue))
+        self.assertTrue(isinstance(
+            scheduler.finished_task_queue, _queue.UniqueQueue))
+        os_mock.assert_called_with('fake')
+
+    @mock.patch('openstack.connect')
+    def test_signal_handler(self, os_mock):
+        scheduler = _scheduler.ApimonScheduler(self.config)
+        with self.assertLogs('apimon_executor', level='INFO') as cm:
+            scheduler.signal_handler(1, 1)
+            self.assertTrue(scheduler.shutdown_event.is_set())
+            self.assertIn(
+                'INFO:apimon_executor:Signal received. '
+                'Gracefully stop processing',
+                cm.output)
+
+    def test_start(self):
+        # This is a big TODO
+        pass
+
+
+class TestScheduler(TestCase):
+
+    def setUp(self):
+        super(TestScheduler, self).setUp()
+        self.config = mock.Mock()
+        self.config.fake1k = 'fake1v'
+        self.config.projects = {
+            'p1': mock.MagicMock(),
+            'p2': mock.MagicMock()
+        }
+        self.task_queue = mock.Mock()
+        self.finished_task_queue = mock.Mock()
+        self.shutdown_event = mock.Mock()
+        self.pause_event = mock.Mock()
+
+        self.scheduler = _scheduler.Scheduler(
+            self.task_queue,
+            self.finished_task_queue,
+            self.shutdown_event,
+            self.pause_event,
+            self.config)
+
+    def test_init(self):
+        self.assertEqual(self.task_queue, self.scheduler.task_queue)
+        self.assertEqual(self.finished_task_queue,
+                         self.scheduler.finished_task_queue)
+        self.assertEqual(self.shutdown_event, self.scheduler.shutdown_event)
+        self.assertEqual(self.pause_event, self.scheduler.pause_event)
+        self.assertEqual('fake1v', self.scheduler._fake1k)
+        self.assertEqual(self.config.projects, self.scheduler._projects)
+
+    def test_init_projects(self):
+        self.scheduler._init_projects()
+        for n, p in self.scheduler._projects.items():
+            p.prepare.assert_called()
+
+    def test_refresh_projects(self):
+        self.scheduler._refresh_interval = 120
+        self.scheduler.set_next_refresh_time(1)
+        self.scheduler.schedule_tasks = mock.Mock()
+        now = time.time()
+        self.scheduler.refresh_projects()
+
+        calls = []
+
+        for n, p in self.scheduler._projects.items():
+            p.is_repo_update_necessary.assert_called()
+            p.refresh_git_repo.assert_called()
+            calls.append(call(self.scheduler.task_queue, p))
+
+        self.scheduler.schedule_tasks.assert_has_calls(calls)
+        self.assertTrue(self.scheduler.get_next_refresh_time() >= now + 120)
 
     def test_schedule_tasks(self):
-        cnf = self._cnf
-        scenarios = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.mkdir(Path(tmpdir, 'dummy'))
-            for i in range(10):
-                Path(tmpdir, 'dummy/scenario{}.yaml'.format(i)).touch()
-                scenarios.append('scenario{}.yaml'.format(i))
-            setattr(cnf, 'scenarios', scenarios)
-            setattr(cnf, 'location', 'dummy')
-            setattr(cnf, 'git_checkout_dir', tmpdir)
-            setattr(cnf, 'log_dest', tmpdir)
-            scheduler = _scheduler.Scheduler(
-                self._task_queue, None, None, None, cnf)
-            with mock.patch.object(scheduler, 'schedule_tasks',
-                                   wraps=scheduler.schedule_tasks
-                                   ) as mock_schedule_tasks:
-                scheduler.schedule_tasks(scheduler.task_queue)
-                self.assertTrue(mock_schedule_tasks.called)
-                self.assertEqual(scheduler.task_queue.qsize(), len(scenarios))
+        p1 = mock.Mock()
+        p1.name = 'p1'
+        p1.tasks.return_value = ['p1_t1', 'p1_t2']
+        p2 = mock.Mock()
+        p2.name = 'p2'
+        p2.tasks.return_value = ['p2_t1', 'p2_t2']
+        queue = _queue.UniqueQueue()
 
-    def test_discard_queue_tasks(self):
-        task_queue = self._task_queue
-        task_queue.put('task1')
-        task_queue.put('task1')
-        scheduler = _scheduler.Scheduler(task_queue, None, None, None)
-        self.assertTrue(scheduler.task_queue.qsize() != 0)
-        scheduler.discard_queue_elements(scheduler.task_queue)
-        self.assertTrue(scheduler.task_queue.qsize() == 0)
+        self.scheduler.schedule_tasks(queue, p1)
+        self.scheduler.schedule_tasks(queue, p2)
 
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.get_git_repo",
-        mock.MagicMock(
-            return_value="test_repo"))
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.refresh_git_repo")
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.is_repo_update_necessary")
-    def test_refresh_git_repo(
-        self,
-        mock_refresh_repo,
-        mock_check_repo_update):
+        scheduled_items = set()
 
-        cnf = self._cnf
-        scenarios = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.mkdir(Path(tmpdir, 'dummy'))
-            for i in range(10):
-                Path(tmpdir, 'dummy/scenario{}.yaml'.format(i)).touch()
-                scenarios.append('scenario{}.yaml'.format(i))
-            setattr(cnf, 'scenarios', scenarios)
-            setattr(cnf, 'location', 'dummy')
-            setattr(cnf, 'git_checkout_dir', tmpdir)
-            scheduler = _scheduler.Scheduler(
-                self._task_queue,
-                self._finished_task_queue,
-                self._shutdown_event,
-                self._ignore_tasks_event,
-                cnf)
-            with ThreadPoolExecutor(max_workers=1) as thread_pool:
-                with mock.patch.object(scheduler, 'schedule_tasks',
-                                       wraps=scheduler.schedule_tasks
-                                       ) as mock_schedule_tasks:
-                    mock_check_repo_update.return_value = False
-                    thread_pool.submit(scheduler.run)
-                    time.sleep(0.2)
-                    self.assertTrue(mock_schedule_tasks.called)
+        while not queue.empty():
+            scheduled_items.add(queue.get().name)
 
-                    self.assertFalse(scheduler.ignore_tasks_event.is_set())
-                    self.assertFalse(scheduler.shutdown_event.is_set())
+        self.assertEqual({'p2.p2_t2', 'p1.p1_t1', 'p1.p1_t2', 'p2.p2_t1'},
+                         scheduled_items)
 
-                    self.assertFalse(mock_refresh_repo.called)
-                    self.assertEqual(
-                        scheduler.task_queue.qsize(), len(scenarios))
+    def test_run(self):
+        p1 = mock.Mock()
+        p1.name = 'p1'
+        p1.tasks.return_value = ['p1_t1', 'p1_t2']
+        p1.prepare = mock.Mock()
+        p2 = mock.Mock()
+        p2.name = 'p2'
+        p2.prepare = mock.Mock()
+        p2.tasks.return_value = ['p2_t1', 'p2_t2']
+        self.scheduler._projects = {'p1': p1, 'p2': p2}
+        self.scheduler.task_queue = _queue.UniqueQueue()
+        self.scheduler.finished_task_queue = _queue.UniqueQueue()
+        self.scheduler._refresh_interval = 120
+        self.scheduler.shutdown_event = threading.Event()
+        self.scheduler.sleep_time = 0.1
 
-                    task_item = scheduler.task_queue.get(False, 1)
-                    scheduler.finished_task_queue.put(task_item)
-                    scheduler.task_queue.task_done()
-                    self.assertEqual(
-                        scheduler.task_queue.qsize(),
-                        len(scenarios) - 1)
-                    time.sleep(1)
-                    self.assertEqual(
-                        scheduler.task_queue.qsize(), len(scenarios))
-                    self.assertEqual(scheduler.finished_task_queue.qsize(), 0)
+        try:
 
-                    self.assertEqual(mock_schedule_tasks.call_count, 1)
-                    mock_check_repo_update.return_value = True
-                    time.sleep(cnf.git_refresh_interval)
-                    self.assertEqual(mock_schedule_tasks.call_count, 2)
-                    mock_check_repo_update.return_value = False
-                    self.assertTrue(mock_refresh_repo.called)
-                    scheduler.shutdown_event.set()
+            thread = threading.Thread(target=self.scheduler.run)
+            thread.start()
+            time.sleep(1)
 
-    @mock.patch(
-        "apimon_executor.scheduler.Scheduler.refresh_git_repo")
-    def test_get_git_repo(self, mock_refresh_repo):
-        cnf = self._cnf
-        scheduler = _scheduler.Scheduler(None, None, None, None)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo_dir = Path(tmpdir, cnf.git_checkout_dir)
-            os.mkdir(repo_dir)
+            scheduled_items = set()
 
-            self.assertFalse(Path(repo_dir, '.git').exists())
-            scheduler.get_git_repo(cnf.repo, repo_dir, cnf.git_ref)
-            self.assertFalse(mock_refresh_repo.called)
-            self.assertTrue(Path(repo_dir, '.git').exists())
+            while not self.scheduler.task_queue.empty():
+                scheduled_items.add(self.scheduler.task_queue.get().name)
 
-            # Call get_git_repo again when repo already exists
-            scheduler.get_git_repo(cnf.repo, repo_dir, cnf.git_ref)
-            self.assertTrue(mock_refresh_repo.called)
+            self.assertEqual({'p2.p2_t2', 'p1.p1_t1', 'p1.p1_t2', 'p2.p2_t1'},
+                             scheduled_items)
+
+            self.scheduler.finished_task_queue.put(
+                _scheduler.TaskItem(p1, 'p1_t3'))
+
+            # Wait longer than default sleep in thread
+            time.sleep(1)
+
+            scheduled_items.clear()
+
+            while not self.scheduler.task_queue.empty():
+                scheduled_items.add(self.scheduler.task_queue.get().name)
+
+            self.assertIn('p1.p1_t3', scheduled_items)
+
+        finally:
+            self.scheduler.shutdown_event.set()
+
+            thread.join()
+
+
+class TestExecutor(TestCase):
+
+    def setUp(self):
+        super(TestExecutor, self).setUp()
+        self.config = mock.Mock()
+        self.config.fake1k = 'fake1v'
+        self.config.log_dest = tempfile.TemporaryDirectory().name
+        self.config.projects = {
+            'p1': mock.MagicMock(),
+            'p2': mock.MagicMock()
+        }
+        self.config.log_fs_keep = True
+        self.config.log_fs_archive = True
+        self.task_queue = mock.Mock()
+        self.finished_task_queue = mock.Mock()
+        self.shutdown_event = mock.Mock()
+        self.pause_event = mock.Mock()
+
+        self.executor = _scheduler.Executor(
+            self.task_queue,
+            self.finished_task_queue,
+            self.shutdown_event,
+            self.pause_event,
+            self.config)
+
+    def test_init(self):
+        self.assertEqual(self.task_queue, self.executor.task_queue)
+        self.assertEqual(self.finished_task_queue,
+                         self.executor.finished_task_queue)
+        self.assertEqual(self.shutdown_event, self.executor.shutdown_event)
+        self.assertEqual(self.pause_event, self.executor.pause_event)
+        self.assertEqual('fake1v', self.executor._fake1k)
+        self.assertEqual(self.config.projects, self.executor._projects)
+
+    def test_prepare_ansible_cfg(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # (1) - config was not present
+            self.executor._prepare_ansible_cfg(tmp_dir)
+
+            ansible_cfg = Path(tmp_dir, 'ansible.cfg')
+            self.assertTrue(ansible_cfg.exists())
+
+            config = configparser.ConfigParser()
+            config.read(ansible_cfg.as_posix())
+            self.assertEqual(
+                'apimon_logger',
+                config['defaults']['stdout_callback'])
+
+            # (2) config contained other value
+            config['defaults']['stdout_callback'] = 'fake'
+            config['defaults']['dummy'] = 'fake'
+            with open(ansible_cfg, 'w') as f:
+                config.write(f)
+
+            self.executor._prepare_ansible_cfg(tmp_dir)
+
+            config.read(ansible_cfg.as_posix())
+
+            self.assertEqual({
+                'stdout_callback': 'apimon_logger',
+                'dummy': 'fake'},
+                config['defaults'])
+
+    def test_archive_log(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log = Path(tmp_dir, 'fake.log')
+            open(log.as_posix(), 'w').close()
+            self.executor.archive_log_file(log)
+            self.assertFalse(log.exists())
+            self.assertTrue(log.with_suffix('.txt.gz').exists)
+
+    def test_execute(self):
+        with mock.patch('subprocess.Popen') as process_mock, \
+                tempfile.TemporaryDirectory() as prj_dir:
+            p1 = mock.Mock()
+            p1.name = 'p1'
+            p1.project_dir = prj_dir
+            p1.get_exec_cmd.return_value = 'fake_cmd fake_arg1 fake_arg2'
+            p1.env = {'a': 'b'}
+            job_id = uuid.uuid4().hex
+            prepare_mock = mock.Mock()
+            self.executor._prepare_ansible_cfg = prepare_mock
+            self.executor.archive_log_file = mock.Mock()
+            self.executor.upload_log_file_to_swift = mock.Mock()
+            self.executor.execute(_scheduler.TaskItem(p1, 'p1_t1'),
+                                  job_id)
+
+            self.assertTrue(Path(self.config.log_dest).exists())
+            job_log_dir = Path(self.config.log_dest, str(job_id[-2:]),
+                               job_id)
+            self.assertTrue(job_log_dir.exists())
+
+            prepare_mock.assert_called()
+            prepare_call_args, prepare_call_kwargs = prepare_mock.call_args
+            job_work_dir = Path(prepare_call_args[0])
+
+            env = os.environ.copy()
+            env['TASK_EXECUTOR_JOB_ID'] = job_id
+            env['ANSIBLE_CALLBACK_PLUGINS'] = self.executor.ansible_plugin_path
+            env['APIMON_EXECUTOR_JOB_CONFIG'] = Path(job_work_dir,
+                                                     'logging.json').as_posix()
+            env['a'] = 'b'
+
+            # Remove dir with log output
+            shutil.rmtree(job_log_dir.as_posix())
+            process_mock.assert_called_with(
+                ['fake_cmd', 'fake_arg1', 'fake_arg2'],
+                cwd=job_work_dir,
+                restore_signals=False,
+                stdout=-1, stderr=-1,
+                env=env,
+                preexec_fn=_scheduler.preexec_function
+            )
+
+            self.executor.archive_log_file.assert_called_with(
+                Path(job_log_dir, 'job-output.txt'))
+
+            self.executor.upload_log_file_to_swift.assert_called_with(
+                Path(job_log_dir, 'job-output.txt'),
+                job_id
+            )
+
+    def test_run(self):
+        p1 = mock.Mock()
+        p1.name = 'p1'
+        p1.tasks.return_value = ['p1_t1', 'p1_t2']
+        p1.prepare = mock.Mock()
+        p2 = mock.Mock()
+        p2.name = 'p2'
+        p2.prepare = mock.Mock()
+        p2.tasks.return_value = ['p2_t1', 'p2_t2']
+        self.executor.task_queue = _queue.UniqueQueue()
+        self.executor.finished_task_queue = _queue.UniqueQueue()
+        self.executor.shutdown_event = threading.Event()
+        self.executor.pause_event = threading.Event()
+        self.executor.execute = mock.Mock(
+            side_effect=[True, Exception('boom')])
+        self.executor._simulate = False
+        self.executor.sleep_time = 0.1
+
+        try:
+
+            task1 = _scheduler.TaskItem(p1, 'p1_t1')
+            task2 = _scheduler.TaskItem(p2, 'p2_t1')
+
+            self.executor.task_queue.put(task1)
+            self.executor.task_queue.put(task2)
+
+            thread = threading.Thread(target=self.executor.run)
+            thread.start()
+
+            rescheduled_items = set()
+
+            calls = [
+                mock.call(task1, mock.ANY),
+                mock.call(task2, mock.ANY)
+            ]
+
+            time.sleep(1)
+            self.executor.execute.assert_has_calls(calls)
+
+            while not self.executor.finished_task_queue.empty():
+                rescheduled_items.add(
+                    self.executor.finished_task_queue.get().name)
+
+            self.assertIn('p1.p1_t1', rescheduled_items)
+            self.assertIn('p2.p2_t1', rescheduled_items)
+
+        finally:
+            self.executor.shutdown_event.set()
+            thread.join()

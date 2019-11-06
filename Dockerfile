@@ -24,7 +24,7 @@ COPY ./requirements.txt /usr/app/requirements.txt
 ADD . /usr/app/task_executor
 
 RUN git clone https://github.com/ansible/ansible --branch stable-2.8 && \
-    git clone https://review.opendev.org/openstack/openstacksdk && \
+    git clone https://review.opendev.org/openstack/openstacksdk
 
 RUN cd openstacksdk && python3 setup.py install --user
 RUN cd ansible && python3 setup.py install --user
