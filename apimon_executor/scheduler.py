@@ -28,6 +28,7 @@ import threading
 import time
 
 import openstack
+from openstack import exceptions
 
 from apimon_executor.ansible import logconfig
 from apimon_executor import queue as _queue
@@ -314,7 +315,7 @@ class Executor(object):
                         'delete-after': self._log_swift_keep_time,
                         'content_type': 'text/plain'
                     })
-            except openstack.SDKException:
+            except exceptions.SDKException:
                 self.log.exception('Error uploading log to Swift')
 
     def _prepare_ansible_cfg(self, work_dir):
