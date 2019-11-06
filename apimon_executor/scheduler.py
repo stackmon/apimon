@@ -312,7 +312,7 @@ class Executor(object):
                 obj.set_metadata(
                     self.logs_cloud.object_store,
                     metadata={
-                        'delete-after': self._log_swift_keep_time,
+                        'delete-after': str(self._log_swift_keep_time),
                         'content_type': 'text/plain'
                     })
             except exceptions.SDKException:
