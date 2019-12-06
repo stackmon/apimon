@@ -4,3 +4,4 @@ GitPython
 statsd
 influxdb
 pbr
+alerta
