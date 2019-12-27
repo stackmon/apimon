@@ -30,6 +30,11 @@ import time
 import openstack
 from openstack import exceptions
 
+try:
+    from alertaclient.api import Client as alerta_client
+except ImportError:
+    alerta_client = None
+
 from apimon_executor.ansible import logconfig
 from apimon_executor import queue as _queue
 
@@ -80,19 +85,32 @@ class ApimonScheduler(object):
         self.config = config
 
         self.logs_cloud = None
+        self.alerta = None
 
-        if config.log_swift_cloud is not None:
-            self.logs_cloud = openstack.connect(config.log_swift_cloud)
+        self._config()
+
+    def _config(self):
+        if self.config.log_swift_cloud is not None:
+            self.logs_cloud = openstack.connect(self.config.log_swift_cloud)
+
+        if alerta_client:
+            alerta_ep = self.config.alerta_endpoint
+            alerta_token = self.config.alerta_token
+            if alerta_ep and alerta_token:
+                self.alerta = alerta_client(
+                    endpoint=alerta_ep,
+                    key=alerta_token)
 
     def signal_shutdown(self, signum, frame):
         # Raise shutdown event
-        self.log.info('Signal received. Gracefully stop processing.')
+        self.log.info('Signal received. Gracefully stop processing')
         self.shutdown_event.set()
 
     def signal_usr(self, signum, frame):
         # Reconfigure
-        self.log.info('USR Signal received. Refreshing.')
+        self.log.info('USR Signal received. Refreshing')
         self.config.read()
+        self._config()
         self._reconfigure_event.set()
         self.shutdown_event.set()
 
@@ -135,13 +153,15 @@ class ApimonScheduler(object):
                                   self.shutdown_event,
                                   self.pause_event,
                                   self.config,
-                                  self.logs_cloud)
+                                  self.logs_cloud,
+                                  self.alerta)
                 thread_pool.submit(thread.run)
             scheduler_thread = Scheduler(self.task_queue,
                                          self.finished_task_queue,
                                          self.shutdown_event,
                                          self.pause_event,
-                                         self.config)
+                                         self.config,
+                                         self.alerta)
             thread_pool.submit(scheduler_thread.run)
         if self._reconfigure_event.is_set():
             self.log.info('Restarting threads')
@@ -153,7 +173,7 @@ class Scheduler(object):
     log = logging.getLogger('apimon_executor.scheduler')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 pause_event, config=None):
+                 pause_event, config=None, alerta=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
@@ -162,6 +182,7 @@ class Scheduler(object):
         if config:
             self.reconfigure(config)
         self.sleep_time = 1
+        self.alerta = alerta
 
     def reconfigure(self, config):
         self.config = config
@@ -229,9 +250,25 @@ class Scheduler(object):
                         break
                 except _queue.Empty:
                     pass
+                if self.alerta:
+                    self.alerta.heartbeat(
+                        origin='task_executor',
+                        tags=[self.alerta_env]
+                    )
                 time.sleep(self.sleep_time)
-        except Exception:
+        except Exception as e:
             self.log.exception('Error occured in the scheduler thread')
+            if self.alerta:
+                self.alerta.send_alert(
+                    severity='critical',
+                    environment=self.config.alerta_env,
+                    origin=self.config.alerta_origin,
+                    service=['apimon', 'task_executor'],
+                    resource='scheduler',
+                    event='Exception',
+                    value=str(e)
+                )
+
         self.log.info('finishing scheduler thread')
         # If scheduler exits - no sense for executors to remain
         self.shutdown_event.set()
@@ -248,7 +285,7 @@ class Executor(object):
     log = logging.getLogger('apimon_executor.executor')
 
     def __init__(self, task_queue, finished_task_queue, shutdown_event,
-                 pause_event, config=None, logs_cloud=None):
+                 pause_event, config=None, logs_cloud=None, alerta=None):
         self.task_queue = task_queue
         self.finished_task_queue = finished_task_queue
         self.shutdown_event = shutdown_event
@@ -261,6 +298,7 @@ class Executor(object):
                 'ansible', 'callback').as_posix()
         self.logs_cloud = logs_cloud
         self.sleep_time = 3
+        self.alerta = alerta
 
     def reconfigure(self, config):
         self.config = config
@@ -298,6 +336,16 @@ class Executor(object):
                             self.log.info('Task %s (%s) finished', cmd, job_id)
                         except Exception as e:
                             self.log.exception(e)
+                            if self.alerta:
+                                self.alerta.send_alert(
+                                    severity='major',
+                                    environment=self.config.alerta_env,
+                                    origin=self.config.alerta_origin,
+                                    service=['apimon', 'task_executor'],
+                                    resource='task',
+                                    event='Exception',
+                                    value=str(e)
+                                )
                         finally:
                             # Even if we had a bad exception during job
                             # execution, try not to loose item and reschedule
@@ -313,9 +361,19 @@ class Executor(object):
                         break
                 except _queue.Empty:
                     pass
-                except Exception:
+                except Exception as e:
                     self.log.exception('Exception occured during task '
                                        'processing')
+                    if self.alerta:
+                        self.alerta.send_alert(
+                            severity='critical',
+                            environment=self.config.alerta_env,
+                            origin=self.config.alerta_origin,
+                            service=['apimon', 'task_executor'],
+                            resource='task',
+                            event='Exception',
+                            value=str(e)
+                        )
             time.sleep(self.sleep_time)
         self.log.info('Finishing executor thread')
 
@@ -348,8 +406,19 @@ class Executor(object):
                         'content_type': 'text/plain'
                     })
                 return True
-            except exceptions.SDKException:
+            except exceptions.SDKException as e:
                 self.log.exception('Error uploading log to Swift')
+                if self.alerta:
+                    self.alerta.send_alert(
+                        severity='major',
+                        environment=self.config.alerta_env,
+                        origin=self.config.alerta_origin,
+                        service=['apimon', 'task_executor'],
+                        resource='task',
+                        event='LogUpload',
+                        value=str(e)
+                    )
+
                 return False
 
     def _prepare_ansible_cfg(self, work_dir):

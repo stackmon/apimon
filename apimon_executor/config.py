@@ -82,3 +82,15 @@ class ExecutorConfig(object):
                 logging.config.fileConfig(f)
         else:
             logging.basicConfig(level=logging.INFO)
+
+        alerta = executor_cfg.get('alerta')
+        if alerta:
+            self.alerta_endpoint = alerta.get('endpoint')
+            self.alerta_token = alerta.get('token')
+            self.alerta_env = alerta.get('env', 'Production')
+            self.alerta_origin = alerta.get('origin', 'task_executor')
+        else:
+            self.alerta_endpoint = None
+            self.alerta_token = None
+            self.alerta_env = None
+            self.alerta_origin = None
