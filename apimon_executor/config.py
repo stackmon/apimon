@@ -21,9 +21,13 @@ from apimon_executor import project
 class ExecutorConfig(object):
 
     def __init__(self, args):
+        self.args = args
+        self.read()
+
+    def read(self):
         self.projects = {}
 
-        with open(args.config, 'r') as f:
+        with open(self.args.config, 'r') as f:
             global_config = yaml.load(f, Loader=yaml.SafeLoader)
         if 'executor' in global_config:
             executor_cfg = global_config['executor']
@@ -46,7 +50,7 @@ class ExecutorConfig(object):
             self.projects[prj.name] = prj
 
         self.simulate = executor_cfg.get('simulate',
-                                         getattr(args, 'simulate', False))
+                                         getattr(self.args, 'simulate', False))
         log_config = executor_cfg.get('log', {})
         self.log_config = log_config.get(
             'log_config',
@@ -70,7 +74,7 @@ class ExecutorConfig(object):
 
         self.count_executor_threads = executor_cfg.get(
             'count_executor_threads',
-            getattr(args, 'count_executor_threads', 5))
+            getattr(self.args, 'count_executor_threads', 5))
         self.refresh_interval = executor_cfg.get('refresh_interval', 120)
 
         if os.path.exists(self.log_config):

@@ -1,5 +1,6 @@
 
 import os
+import queue
 from pathlib import Path
 import configparser
 import argparse
@@ -85,7 +86,7 @@ class TestApimonScheduler(TestCase):
     def test_signal_handler(self, os_mock):
         scheduler = _scheduler.ApimonScheduler(self.config)
         with self.assertLogs('apimon_executor', level='INFO') as cm:
-            scheduler.signal_handler(1, 1)
+            scheduler.signal_shutdown(1, 1)
             self.assertTrue(scheduler.shutdown_event.is_set())
             self.assertIn(
                 'INFO:apimon_executor:Signal received. '
@@ -107,10 +108,10 @@ class TestScheduler(TestCase):
             'p1': mock.MagicMock(),
             'p2': mock.MagicMock()
         }
-        self.task_queue = mock.Mock()
-        self.finished_task_queue = mock.Mock()
-        self.shutdown_event = mock.Mock()
-        self.pause_event = mock.Mock()
+        self.task_queue = queue.Queue()
+        self.finished_task_queue = queue.Queue()
+        self.shutdown_event = threading.Event()
+        self.pause_event = threading.Event()
 
         self.scheduler = _scheduler.Scheduler(
             self.task_queue,
@@ -125,16 +126,16 @@ class TestScheduler(TestCase):
                          self.scheduler.finished_task_queue)
         self.assertEqual(self.shutdown_event, self.scheduler.shutdown_event)
         self.assertEqual(self.pause_event, self.scheduler.pause_event)
-        self.assertEqual('fake1v', self.scheduler._fake1k)
-        self.assertEqual(self.config.projects, self.scheduler._projects)
+        self.assertEqual('fake1v', self.scheduler.config.fake1k)
+        self.assertEqual(self.config.projects, self.scheduler.config.projects)
 
     def test_init_projects(self):
         self.scheduler._init_projects()
-        for n, p in self.scheduler._projects.items():
+        for n, p in self.scheduler.config.projects.items():
             p.prepare.assert_called()
 
     def test_refresh_projects(self):
-        self.scheduler._refresh_interval = 120
+        self.scheduler.config.refresh_interval = 120
         self.scheduler.set_next_refresh_time(1)
         self.scheduler.schedule_tasks = mock.Mock()
         now = time.time()
@@ -142,7 +143,7 @@ class TestScheduler(TestCase):
 
         calls = []
 
-        for n, p in self.scheduler._projects.items():
+        for n, p in self.scheduler.config.projects.items():
             p.is_repo_update_necessary.assert_called()
             p.refresh_git_repo.assert_called()
             calls.append(call(self.scheduler.task_queue, p))
@@ -179,10 +180,10 @@ class TestScheduler(TestCase):
         p2.name = 'p2'
         p2.prepare = mock.Mock()
         p2.tasks.return_value = ['p2_t1', 'p2_t2']
-        self.scheduler._projects = {'p1': p1, 'p2': p2}
+        self.scheduler.config.projects = {'p1': p1, 'p2': p2}
         self.scheduler.task_queue = _queue.UniqueQueue()
         self.scheduler.finished_task_queue = _queue.UniqueQueue()
-        self.scheduler._refresh_interval = 120
+        self.scheduler.config.refresh_interval = 120
         self.scheduler.shutdown_event = threading.Event()
         self.scheduler.sleep_time = 0.1
 
@@ -250,8 +251,8 @@ class TestExecutor(TestCase):
                          self.executor.finished_task_queue)
         self.assertEqual(self.shutdown_event, self.executor.shutdown_event)
         self.assertEqual(self.pause_event, self.executor.pause_event)
-        self.assertEqual('fake1v', self.executor._fake1k)
-        self.assertEqual(self.config.projects, self.executor._projects)
+        self.assertEqual('fake1v', self.executor.config.fake1k)
+        self.assertEqual(self.config.projects, self.executor.config.projects)
 
     def test_prepare_ansible_cfg(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -356,7 +357,7 @@ class TestExecutor(TestCase):
         self.executor.pause_event = threading.Event()
         self.executor.execute = mock.Mock(
             side_effect=[True, Exception('boom')])
-        self.executor._simulate = False
+        self.executor.config.simulate = False
         self.executor.sleep_time = 0.1
 
         try:

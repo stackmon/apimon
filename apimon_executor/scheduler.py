@@ -74,6 +74,8 @@ class ApimonScheduler(object):
         self.pause_event = threading.Event()
         self.task_queue = _queue.UniqueQueue()
         self.finished_task_queue = _queue.UniqueQueue()
+        self._threads = []
+        self._reconfigure_event = threading.Event()
 
         self.config = config
 
@@ -82,9 +84,16 @@ class ApimonScheduler(object):
         if config.log_swift_cloud is not None:
             self.logs_cloud = openstack.connect(config.log_swift_cloud)
 
-    def signal_handler(self, signum, frame):
+    def signal_shutdown(self, signum, frame):
         # Raise shutdown event
-        self.log.info('Signal received. Gracefully stop processing')
+        self.log.info('Signal received. Gracefully stop processing.')
+        self.shutdown_event.set()
+
+    def signal_usr(self, signum, frame):
+        # Reconfigure
+        self.log.info('USR Signal received. Refreshing.')
+        self.config.read()
+        self._reconfigure_event.set()
         self.shutdown_event.set()
 
     def create_logs_container(self, connection, container_name):
@@ -107,10 +116,19 @@ class ApimonScheduler(object):
         if self.logs_cloud and self.config.log_swift_container_name:
             self.create_logs_container(self.logs_cloud,
                                        self.config.log_swift_container_name)
+        signal.signal(signal.SIGINT, self.signal_shutdown)
+        signal.signal(signal.SIGUSR1, self.signal_usr)
+        self._start_threads()
+
+    def _start_threads(self, reconfig=False):
+
+        if reconfig:
+            self.shutdown_event.clear()
+            self._reconfigure_event.clear()
+
         with ThreadPoolExecutor(
                 max_workers=self.config.count_executor_threads + 1) \
                 as thread_pool:
-            signal.signal(signal.SIGINT, self.signal_handler)
 
             for i in range(self.config.count_executor_threads):
                 thread = Executor(self.task_queue, self.finished_task_queue,
@@ -125,6 +143,9 @@ class ApimonScheduler(object):
                                          self.pause_event,
                                          self.config)
             thread_pool.submit(scheduler_thread.run)
+        if self._reconfigure_event.is_set():
+            self.log.info('Restarting threads')
+            self._start_threads(reconfig=True)
 
 
 class Scheduler(object):
@@ -143,28 +164,34 @@ class Scheduler(object):
         self.sleep_time = 1
 
     def reconfigure(self, config):
-        for k, v in config.__dict__.items():
-            setattr(self, '_' + k, v)
+        self.config = config
 
     def _init_projects(self):
-        for name, project in self._projects.items():
+        for name, project in self.config.projects.items():
             project.prepare()
 
     def refresh_projects(self):
         current_time = time.time()
         # Check whether git update should be done/checked
-        if (self._refresh_interval > 0
+        if (self.config.refresh_interval > 0
                 and current_time >= self.get_next_refresh_time()):
-            for name, project in self._projects.items():
+            for name, project in self.config.projects.items():
                 if project.is_repo_update_necessary():
                     # Set pause event for executors not to start new stuff
                     self.pause_event.set()
                     project.refresh_git_repo()
+                    # Discard all scheduled items for relevant project
+                    for i in range(self.task_queue.qsize()):
+                        entity = self.task_queue.get_nowait()
+                        if entity.project.name != project.name:
+                            # Item of other project - reschedule
+                            self.task_queue.put(entity)
                     self.schedule_tasks(self.task_queue, project)
                     # We can continue processing
                     self.pause_event.clear()
 
-            self.set_next_refresh_time(time.time() + self._refresh_interval)
+            self.set_next_refresh_time(
+                time.time() + self.config.refresh_interval)
 
     def get_next_refresh_time(self):
         return self.data.next_git_refresh
@@ -186,9 +213,10 @@ class Scheduler(object):
 
             self._init_projects()
 
-            for name, project in self._projects.items():
+            for name, project in self.config.projects.items():
                 self.schedule_tasks(self.task_queue, project)
-            self.set_next_refresh_time(time.time() + self._refresh_interval)
+            self.set_next_refresh_time(
+                time.time() + self.config.refresh_interval)
             while not self.shutdown_event.is_set():
                 self.refresh_projects()
                 # Now check the finished tasks queue and re-queue them
@@ -235,8 +263,7 @@ class Executor(object):
         self.sleep_time = 3
 
     def reconfigure(self, config):
-        for k, v in config.__dict__.items():
-            setattr(self, '_' + k, v)
+        self.config = config
 
     def run(self):
         self.log.info('Starting Executor thread')
@@ -263,7 +290,7 @@ class Executor(object):
                         self.log.info('Starting task %s with jobId: %s', cmd,
                                       job_id)
                         try:
-                            if not self._simulate:
+                            if not self.config.simulate:
                                 self.execute(task_item, job_id)
                             else:
                                 # Simulate processing
@@ -275,7 +302,12 @@ class Executor(object):
                             # Even if we had a bad exception during job
                             # execution, try not to loose item and reschedule
                             # it
-                            self.finished_task_queue.put(task_item)
+                            if not self.pause_event.is_set():
+                                self.finished_task_queue.put(task_item)
+                            else:
+                                self.log.debug('Finishing entity while '
+                                               'pause_event is set - not '
+                                               'rescheduling.')
                             self.task_queue.task_done()
                     else:
                         break
@@ -304,7 +336,7 @@ class Executor(object):
             log_data = open(job_log_file, 'r').read()
             try:
                 obj = self.logs_cloud.object_store.create_object(
-                    container=self._log_swift_container_name,
+                    container=self.config.log_swift_container_name,
                     name='{id}/{name}'.format(
                         id=job_id,
                         name=job_log_file.name),
@@ -312,11 +344,13 @@ class Executor(object):
                 obj.set_metadata(
                     self.logs_cloud.object_store,
                     metadata={
-                        'delete-after': str(self._log_swift_keep_time),
+                        'delete-after': str(self.config.log_swift_keep_time),
                         'content_type': 'text/plain'
                     })
+                return True
             except exceptions.SDKException:
                 self.log.exception('Error uploading log to Swift')
+                return False
 
     def _prepare_ansible_cfg(self, work_dir):
         config = configparser.ConfigParser()
@@ -347,7 +381,7 @@ class Executor(object):
                                job_work_dir.as_posix(),
                                preserve_symlinks=1)
             # Prepare dir for job logs
-            job_log_dir = Path(self._log_dest, str(job_id[-2:]), job_id)
+            job_log_dir = Path(self.config.log_dest, str(job_id[-2:]), job_id)
             job_log_dir.mkdir(parents=True, exist_ok=True)
             # Generate job log config
             job_log_file = Path(job_log_dir, 'job-output.txt')
@@ -388,10 +422,10 @@ class Executor(object):
             # Wait for child process to finish
             process.wait()
 
-            self.upload_log_file_to_swift(job_log_file, job_id)
+            res = self.upload_log_file_to_swift(job_log_file, job_id)
 
-            if self._log_fs_keep:
-                if self._log_fs_archive:
+            if self.config.log_fs_keep or not res:
+                if self.config.log_fs_archive:
                     self.archive_log_file(job_log_file)
             else:
                 job_log_file.unlink()
