@@ -35,23 +35,36 @@ class Project(object):
         for (k, v) in kwargs.items():
             setattr(self, k, v)
 
+    def _ansible_galaxy_install(self, object_type='role',
+                                requirements_file='requirements.yml'):
+        proc = subprocess.Popen(
+            'ansible-galaxy {type} install -r '
+            '{file}'.format(
+                type=object_type,
+                file=requirements_file.resolve()).split(' '),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        self.log.debug('Installing galaxy deps')
+
+        for line in proc.stdout:
+            self.log.info('%s', line.decode('utf-8'))
+        stderr = proc.stderr.read()
+        if stderr:
+            self.log.error('%s', stderr.decode('utf-8'))
+
+        proc.wait()
+
+        return proc.returncode
+
     def prepare(self):
         self.repo = self.get_git_repo()
         # Try to install requirements
         requirements_file = Path(self.project_dir, 'requirements.yml')
         if (self.project_type.lower() == 'ansible' and
                 requirements_file.exists()):
-            process = subprocess.Popen(
-                'ansible-galaxy install -r '
-                '{file}'.format(file=requirements_file.resolve()).split(' '),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE)
-            # Read the output
-            for line in process.stdout:
-                self.log.debug('%s', line.decode('utf-8'))
-            stderr = process.stderr.read()
-            if stderr:
-                self.log.error('%s', stderr.decode('utf-8'))
+            rc = self._ansible_galaxy_install('role', requirements_file)
+            rc = self._ansible_galaxy_install('collection', requirements_file)
+            return rc
 
     def get_git_repo(self):
         """Get a repository object

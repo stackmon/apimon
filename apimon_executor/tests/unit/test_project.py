@@ -85,6 +85,33 @@ class TestProject(TestCase):
             self.assertFalse(self.project.is_repo_update_necessary())
             repo_mock.remotes.origin.update.assert_called()
 
+    def test_ansible_galaxy_install(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_dir = Path(tmp_dir, 'fake_proj')
+
+            Repo.init(repo_dir)
+
+            prj = _project.Project('fake_proj', 'fake_url', 'master',
+                                   'ansible', 'fake_loc', 'fake_cmd %%s',
+                                   tmp_dir)
+            requirements_file = Path(repo_dir, 'requirements.yml')
+
+            with mock.patch.object(prj, 'refresh_git_repo'), \
+                    mock.patch('subprocess.Popen') as process_mock:
+                open(requirements_file, 'a').close()
+                prj._ansible_galaxy_install('role', requirements_file)
+                process_mock.assert_called_with(
+                    'ansible-galaxy role install -r {file}'.format(
+                        file=Path(requirements_file).resolve()).split(' '),
+                    stdout=-1, stderr=-1
+                )
+                prj._ansible_galaxy_install('collection', requirements_file)
+                process_mock.assert_called_with(
+                    'ansible-galaxy collection install -r {file}'.format(
+                        file=Path(requirements_file).resolve()).split(' '),
+                    stdout=-1, stderr=-1
+                )
+
     def test_prepare_ansible(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
 
@@ -98,18 +125,19 @@ class TestProject(TestCase):
             requirements_file = Path(repo_dir, 'requirements.yml')
 
             with mock.patch.object(prj, 'refresh_git_repo'), \
-                    mock.patch('subprocess.Popen') as process_mock:
+                    mock.patch.object(prj, '_ansible_galaxy_install') \
+                    as install_mock:
                 prj.prepare()
-                process_mock.assert_not_called()
+                install_mock.assert_not_called()
 
                 # Now write file and ensure galaxy invoked
                 open(requirements_file, 'a').close()
                 prj.prepare()
-                process_mock.assert_called_with(
-                    'ansible-galaxy install -r {file}'.format(
-                        file=Path(requirements_file).resolve()).split(' '),
-                    stdout=-1, stderr=-1
-                )
+                calls = [
+                    mock.call('role', requirements_file),
+                    mock.call('collection', requirements_file)
+                ]
+                install_mock.assert_has_calls(calls)
 
     def test_tasks_all(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
