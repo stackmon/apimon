@@ -5,13 +5,15 @@ executor:
       repo_url: https://github.com/opentelekomcloud-infra/apimon-tests
       repo_ref: master
       scenarios_location: playbooks
+      scenarios:
+        - scenario1_token.yaml
       env:
         OS_CLOUD: otc_blablabla
         SOME_ANOTHER_ENV: fake
   refresh_interval: 2
   count_executor_threads: 8
   log:
-    config: /usr/app/task_executor/etc/logging.conf
+    config: ../etc/logging.conf
     jobs:
       fs:
         dest: /var/log/executor/jobs
