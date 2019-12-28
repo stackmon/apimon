@@ -135,6 +135,7 @@ class ApimonScheduler(object):
             self.create_logs_container(self.logs_cloud,
                                        self.config.log_swift_container_name)
         signal.signal(signal.SIGINT, self.signal_shutdown)
+        signal.signal(signal.SIGTERM, self.signal_shutdown)
         signal.signal(signal.SIGUSR1, self.signal_usr)
         self._start_threads()
 
