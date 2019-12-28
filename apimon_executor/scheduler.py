@@ -499,5 +499,8 @@ class Executor(object):
                 if self.config.log_fs_archive:
                     self.archive_log_file(job_log_file)
             else:
-                job_log_file.unlink()
-                job_log_dir.unlink()
+                try:
+                    job_log_file.unlink()
+                    job_log_dir.rmdir()
+                except Exception:
+                    pass
