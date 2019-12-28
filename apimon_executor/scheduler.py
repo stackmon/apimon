@@ -201,6 +201,7 @@ class Scheduler(object):
                     # Set pause event for executors not to start new stuff
                     self.pause_event.set()
                     project.refresh_git_repo()
+                    project.prepare()
                     # Discard all scheduled items for relevant project
                     for i in range(self.task_queue.qsize()):
                         entity = self.task_queue.get_nowait()
