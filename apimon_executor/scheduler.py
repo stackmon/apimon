@@ -253,7 +253,7 @@ class Scheduler(object):
                 if self.alerta:
                     self.alerta.heartbeat(
                         origin='task_executor',
-                        tags=[self.alerta_env]
+                        tags=[self.config.alerta_env]
                     )
                 time.sleep(self.sleep_time)
         except Exception as e:
