@@ -498,3 +498,4 @@ class Executor(object):
                     self.archive_log_file(job_log_file)
             else:
                 job_log_file.unlink()
+                job_log_dir.unlink()
