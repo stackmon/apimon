@@ -1,10 +1,18 @@
 #!/bin/bash
 
-prep_term()
+prep_signal()
 {
     unset term_child_pid
     unset term_kill_needed
     trap 'handle_term' TERM INT
+    trap 'handle_usr' USR1
+}
+
+handle_usr()
+{
+    if [ "${term_child_pid}" ]; then
+        kill -USR1 "${term_child_pid}" 2>/dev/null
+    fi
 }
 
 handle_term()
@@ -32,6 +40,6 @@ cd /usr/app
 
 config=${EXECUTOR_CONFIG:-/etc/apimon_executor/executor.yaml}
 
-prep_term
+prep_signal
 apimon-scheduler --config ${config} &
 wait_term
