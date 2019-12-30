@@ -341,16 +341,20 @@ class Executor(object):
                             self.log.info('Task %s (%s) finished', cmd, job_id)
                         except Exception as e:
                             self.log.exception(e)
-                            if self.alerta:
-                                self.alerta.send_alert(
-                                    severity='major',
-                                    environment=self.config.alerta_env,
-                                    origin=self.config.alerta_origin,
-                                    service=['apimon', 'task_executor'],
-                                    resource='task',
-                                    event='Exception',
-                                    value=str(e)
-                                )
+                            try:
+                                if self.alerta:
+                                    self.alerta.send_alert(
+                                        severity='major',
+                                        environment=self.config.alerta_env,
+                                        origin=self.config.alerta_origin,
+                                        service=['apimon', 'task_executor'],
+                                        resource='task',
+                                        event='Exception',
+                                        value=str(e)
+                                    )
+                            except Exception:
+                                self.log.exception('Error sending data to '
+                                                   'alerta')
                         finally:
                             # Even if we had a bad exception during job
                             # execution, try not to loose item and reschedule
@@ -369,16 +373,20 @@ class Executor(object):
                 except Exception as e:
                     self.log.exception('Exception occured during task '
                                        'processing')
-                    if self.alerta:
-                        self.alerta.send_alert(
-                            severity='critical',
-                            environment=self.config.alerta_env,
-                            origin=self.config.alerta_origin,
-                            service=['apimon', 'task_executor'],
-                            resource='task',
-                            event='Exception',
-                            value=str(e)
-                        )
+                    try:
+                        if self.alerta:
+                            self.alerta.send_alert(
+                                severity='critical',
+                                environment=self.config.alerta_env,
+                                origin=self.config.alerta_origin,
+                                service=['apimon', 'task_executor'],
+                                resource='task',
+                                event='Exception',
+                                value=str(e)
+                            )
+                    except Exception:
+                        self.log.exception('Error sending data to '
+                                           'alerta')
             time.sleep(self.sleep_time)
         self.log.info('Finishing executor thread')
 
