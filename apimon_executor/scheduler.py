@@ -253,10 +253,13 @@ class Scheduler(object):
                 except _queue.Empty:
                     pass
                 if self.alerta:
-                    self.alerta.heartbeat(
-                        origin='task_executor',
-                        tags=[self.config.alerta_env]
-                    )
+                    try:
+                        self.alerta.heartbeat(
+                            origin='task_executor',
+                            tags=[self.config.alerta_env]
+                        )
+                    except Exception:
+                        self.log.exception('Error sending heartbeat')
                 time.sleep(self.sleep_time)
         except Exception as e:
             self.log.exception('Error occured in the scheduler thread')
