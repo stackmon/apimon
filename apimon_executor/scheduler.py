@@ -255,8 +255,8 @@ class Scheduler(object):
                 if self.alerta:
                     try:
                         self.alerta.heartbeat(
-                            origin='task_executor',
-                            tags=[self.config.alerta_env]
+                            origin='task_executor' + self.config.alerta_env,
+                            tags=['task_executor', 'scheduler']
                         )
                     except Exception:
                         self.log.exception('Error sending heartbeat')
