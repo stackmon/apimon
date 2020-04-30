@@ -68,11 +68,11 @@ _DEFAULT_JOB_LOGGING_CONFIG = {
         },
     },
     'loggers': {
-        'apimon_executor.ansible.result': {
+        'apimon.ansible.result': {
             'handlers': ['result'],
             'level': 'INFO',
         },
-        'apimon_executor.ansible': {
+        'apimon.ansible': {
             'handlers': ['jobfile'],
             'level': 'INFO',
         },
@@ -132,7 +132,7 @@ class JobLoggingConfig(DictLoggingConfig):
             self.job_output_file = job_output_file
 
     def setDebug(self):
-        self._config['loggers']['executor.ansible']['level'] = 'DEBUG'
+        self._config['loggers']['apimon.ansible']['level'] = 'DEBUG'
 
     @property
     def job_output_file(self):

@@ -25,7 +25,7 @@ import time
 
 from ansible.plugins.callback import CallbackBase
 
-from apimon_executor.ansible import logconfig
+from apimon.ansible import logconfig
 
 
 class CallbackModule(CallbackBase):
@@ -64,7 +64,7 @@ class CallbackModule(CallbackBase):
 
         logging_config.apply()
 
-        self._logger = logging.getLogger('apimon_executor.ansible')
+        self._logger = logging.getLogger('apimon.ansible')
 
     def _log(self, msg, ts=None, job=True, executor=False, debug=False):
         msg = msg.rstrip()

@@ -1,4 +1,5 @@
 ansible
+gear
 otcextensions
 GitPython
 statsd
