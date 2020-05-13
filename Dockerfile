@@ -24,13 +24,17 @@ COPY ./requirements.txt /usr/app/requirements.txt
 RUN git clone https://github.com/ansible/ansible --branch stable-2.9 && \
     git clone https://review.opendev.org/openstack/openstacksdk
 
-RUN cd openstacksdk && git fetch https://review.opendev.org/openstack/openstacksdk refs/changes/97/727097/3 && git checkout FETCH_HEAD
-RUN cd openstacksdk && python3 setup.py install --user
 RUN cd ansible && python3 setup.py install --user
 
 ADD . /usr/app/apimon
 
 RUN pip3 install --user -r /usr/app/requirements.txt
+
+RUN cd openstacksdk \
+    && git fetch https://review.opendev.org/openstack/openstacksdk \
+    refs/changes/97/727097/3 \
+    && git checkout FETCH_HEAD \
+    && python3 setup.py install --user
 
 RUN cd apimon && python3 setup.py install --user
 
