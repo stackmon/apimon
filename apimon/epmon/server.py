@@ -36,6 +36,7 @@ class EndpointMonitor(threading.Thread):
         self.daemon = True
         self.wake_event = threading.Event()
         self._stopped = False
+        self._pause = False
         self.config = config
         self.target_cloud = target_cloud
         auth_part = None
@@ -49,6 +50,9 @@ class EndpointMonitor(threading.Thread):
                                target_cloud)
 
         influx_cnf = self.config.get_default('metrics', 'influxdb')
+        override_measurement = self.config.get_default('epmon', 'measurement')
+        if override_measurement and influx_cnf:
+            influx_cnf['measurement'] = override_measurement
 
         self.region = openstack.config.get_cloud_region(
             load_yaml_config=False,
@@ -67,6 +71,12 @@ class EndpointMonitor(threading.Thread):
         self._stopped = True
         self.wake_event.set()
 
+    def pause(self) -> None:
+        self._pause = True
+
+    def resume(self) -> None:
+        self._pause = False
+
     def run(self) -> None:
         self._connect()
         while True:
@@ -76,6 +86,9 @@ class EndpointMonitor(threading.Thread):
                 # Not sure whether it works if we loose connection
                 self._connect()
             try:
+                if self._pause:
+                    # Do not send heartbeat as well to not to forget to resume
+                    continue
                 self._execute()
                 if self.alerta:
                     try:
@@ -103,14 +116,33 @@ class EndpointMonitor(threading.Thread):
         eps = self.conn.config.get_service_catalog().get_endpoints().items()
         for service, data in eps:
             endpoint = data[0]['url']
+            response = None
+            error = None
             try:
                 client = self.conn.config.get_session_client(service)
-                client.get(
+                response = client.get(
                     endpoint,
                     headers={'content-type': 'application/json'},
                     timeout=5)
-            except Exception:
-                self.log.exception('Error checking endpoint %s', service)
+            except Exception as e:
+                error = e
+            if error or (response and int(response.status_code) >= 500):
+                if self.alerta:
+                    self.alerta.send_alert(
+                        severity='critical',
+                        environment=self.target_cloud,
+                        service=['apimon', 'endpoint_monitor'],
+                        resource=service,
+                        event='Failure',
+                        value='curl -g -i -X GET %s -H '
+                              '"X-Auth-Token: ${TOKEN}" '
+                              '-H "content-type: application/json" fails' %
+                              endpoint,
+                        raw_data=str(error or response)
+                    )
+                else:
+                    self.log.error('Got error from the endpoint check, but '
+                                   'cannot report it to alerta')
 
 
 class EndpointMonitorServer:
@@ -129,8 +161,8 @@ class EndpointMonitorServer:
             resume=self.resume,
         )
         command_socket = self.config.get_default(
-            'epmonitor', 'socket',
-            '/var/lib/apimon/epmonitor.socket')
+            'epmon', 'socket',
+            '/var/lib/apimon/epmon.socket')
         self.command_socket = commandsocket.CommandSocket(command_socket)
 
         self._command_running = False
@@ -149,7 +181,7 @@ class EndpointMonitorServer:
         self.command_thread.daemon = True
         self.command_thread.start()
 
-        for cl in self.config.get_default('epmonitor', 'clouds', []):
+        for cl in self.config.get_default('epmon', 'clouds', []):
             self.log.debug('Need to monitor cloud %s' % cl)
             self._monitors[cl] = EndpointMonitor(self.config, cl)
             self._monitors[cl].start()
@@ -178,8 +210,20 @@ class EndpointMonitorServer:
     def pause(self):
         self.log.debug('Pausing')
 
+        with self.run_lock:
+            monitors = list(self._monitors.values())
+
+        for mon in monitors:
+            mon.pause()
+
     def resume(self):
         self.log.debug('Resuming')
+
+        with self.run_lock:
+            monitors = list(self._monitors.values())
+
+        for mon in monitors:
+            mon.resume()
 
     def run_command(self):
         while self._command_running:
