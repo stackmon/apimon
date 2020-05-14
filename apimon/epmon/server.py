@@ -14,12 +14,16 @@ import logging
 import threading
 import time
 
+import keystoneauth1
 import openstack
+import urllib3
 
 try:
     from alertaclient.api import Client as alerta_client
 except ImportError:
     alerta_client = None
+
+import influxdb
 
 from apimon.lib import commandsocket
 
@@ -31,7 +35,7 @@ class EndpointMonitor(threading.Thread):
     """A thread that checks endpoints. """
     log = logging.getLogger("apimon.EndpointMonitor")
 
-    def __init__(self, config, target_cloud):
+    def __init__(self, config, target_cloud, alerta):
         threading.Thread.__init__(self)
         self.daemon = True
         self.wake_event = threading.Event()
@@ -39,33 +43,31 @@ class EndpointMonitor(threading.Thread):
         self._pause = False
         self.config = config
         self.target_cloud = target_cloud
+        self.alerta = alerta
         auth_part = None
+        self.conn = None
+
+        self.influx_cnf = self.config.get_default('metrics', 'influxdb')
 
         for cnf in self.config.config.get('clouds', []):
             if cnf.get('name') == target_cloud:
                 auth_part = cnf.get('data')
+                if 'additional_metric_tags' in auth_part:
+                    self.influx_cnf['additional_metric_tags'] = \
+                        auth_part['additional_metric_tags']
 
         if not auth_part:
             raise RuntimeError('Requested cloud %s is not found' %
                                target_cloud)
 
-        influx_cnf = self.config.get_default('metrics', 'influxdb')
         override_measurement = self.config.get_default('epmon', 'measurement')
-        if override_measurement and influx_cnf:
-            influx_cnf['measurement'] = override_measurement
+        if override_measurement and self.influx_cnf:
+            self.influx_cnf['measurement'] = override_measurement
 
         self.region = openstack.config.get_cloud_region(
             load_yaml_config=False,
             **auth_part)
-        self.region._influxdb_config = influx_cnf
-
-        if alerta_client:
-            alerta_ep = self.config.get_default('alerta', 'endpoint')
-            alerta_token = self.config.get_default('alerta', 'token')
-            if alerta_ep and alerta_token:
-                self.alerta = alerta_client(
-                    endpoint=alerta_ep,
-                    key=alerta_token)
+        self.region._influxdb_config = self.influx_cnf
 
     def stop(self) -> None:
         self._stopped = True
@@ -76,6 +78,17 @@ class EndpointMonitor(threading.Thread):
 
     def resume(self) -> None:
         self._pause = False
+
+    def _connect_influx(self) -> None:
+        try:
+            self.influxdb_client = influxdb.InfluxDBClient(
+                self.influx_cnf['host'],
+                self.influx_cnf['port'],
+                self.influx_cnf['username'],
+                self.influx_cnf['password']
+            )
+        except Exception:
+            self.log.exception('Failed to establish connection to influxDB')
 
     def run(self) -> None:
         self._connect()
@@ -89,7 +102,8 @@ class EndpointMonitor(threading.Thread):
                 if self._pause:
                     # Do not send heartbeat as well to not to forget to resume
                     continue
-                self._execute()
+                if self.conn:
+                    self._execute()
                 if self.alerta:
                     try:
                         self.alerta.heartbeat(
@@ -104,13 +118,20 @@ class EndpointMonitor(threading.Thread):
                 self.log.exception("Exception checking endpoints:")
 
     def _connect(self):
+        self._connect_influx()
         try:
             self.conn = openstack.connection.Connection(
                 config=self.region,
             )
-        except Exception:
-            self.log.exception('Cannot establish connection to cloud %s' %
-                               self.target_cloud)
+        except AttributeError as e:
+            # NOTE(gtema): SDK chains attribute error when calling
+            # conn.authorize, but response is not present
+            self.log.error('Cannot establish connection: %s' % e.__context__)
+            self.send_alert('identity', e.__context__)
+        except Exception as e:
+            self.log.exception('Cannot establish connection to cloud %s: %s' %
+                               (self.target_cloud, e))
+            self.send_alert('identity', e)
 
     def _execute(self):
         eps = self.conn.config.get_service_catalog().get_endpoints().items()
@@ -126,23 +147,60 @@ class EndpointMonitor(threading.Thread):
                     timeout=5)
             except Exception as e:
                 error = e
-            if error or (response and int(response.status_code) >= 500):
-                if self.alerta:
-                    self.alerta.send_alert(
-                        severity='critical',
-                        environment=self.target_cloud,
-                        service=['apimon', 'endpoint_monitor'],
-                        resource=service,
-                        event='Failure',
-                        value='curl -g -i -X GET %s -H '
-                              '"X-Auth-Token: ${TOKEN}" '
-                              '-H "content-type: application/json" fails' %
-                              endpoint,
-                        raw_data=str(error or response)
+                self.log.debug('Got exception for endpoint %s: %s' % (endpoint,
+                                                                      e))
+            status_code = 0
+            if response:
+                status_code = int(response.status_code)
+            if error or status_code >= 500:
+                tags = dict(
+                    method='GET',
+                    service_type=service,
+                    status_code=str(status_code),
+                    name='discovery')
+                duration = (response.elapsed.microseconds / 1000) \
+                    if response else 0
+
+                if 'additional_metric_tags' in self.influx_cnf:
+                    tags.update(self.influx_cnf['additional_metric_tags'])
+                data = [dict(
+                    measurement=(self.influx_cnf.get('measurement',
+                                                     'epmon')),
+                    tags=tags,
+                    fields=dict(
+                        duration=int(duration),
+                        status_code_val=int(status_code)
                     )
-                else:
-                    self.log.error('Got error from the endpoint check, but '
-                                   'cannot report it to alerta')
+                )]
+                try:
+                    self.influxdb_client.write_points(data)
+                except Exception:
+                    self.log.exception('Error writing statistics to InfluxDB')
+
+                self.send_alert(
+                    resource=service,
+                    value='curl -g -i -X GET %s -H '
+                          '"X-Auth-Token: ${TOKEN}" '
+                          '-H "content-type: application/json" fails' %
+                          endpoint,
+                    raw_data=str(error.message or response)
+                )
+
+    def send_alert(self, resource: str, value: str,
+                   raw_data: str=None) -> None:
+        if self.alerta:
+            self.alerta.send_alert(
+                severity='critical',
+                environment=self.target_cloud,
+                service=['apimon', 'endpoint_monitor'],
+                resource=resource,
+                event='Failure',
+                value=value,
+                raw_data=raw_data
+            )
+        else:
+            self.log.error('Got error from the endpoint check, but '
+                           'cannot report it to alerta')
 
 
 class EndpointMonitorServer:
@@ -170,6 +228,15 @@ class EndpointMonitorServer:
         self._monitors = {}
 #        self.accepting_work = False
 
+    def _connect_alerta(self) -> None:
+        if alerta_client:
+            alerta_ep = self.config.get_default('alerta', 'endpoint')
+            alerta_token = self.config.get_default('alerta', 'token')
+            if alerta_ep and alerta_token:
+                self.alerta = alerta_client(
+                    endpoint=alerta_ep,
+                    key=alerta_token)
+
     def start(self):
         self._running = True
         self._command_running = True
@@ -181,9 +248,11 @@ class EndpointMonitorServer:
         self.command_thread.daemon = True
         self.command_thread.start()
 
+        self._connect_alerta()
+
         for cl in self.config.get_default('epmon', 'clouds', []):
             self.log.debug('Need to monitor cloud %s' % cl)
-            self._monitors[cl] = EndpointMonitor(self.config, cl)
+            self._monitors[cl] = EndpointMonitor(self.config, cl, self.alerta)
             self._monitors[cl].start()
 
     def stop(self):
