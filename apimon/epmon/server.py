@@ -45,7 +45,7 @@ class EndpointMonitor(threading.Thread):
         auth_part = None
         self.conn = None
 
-        self.influx_cnf = self.config.get_default('metrics', 'influxdb')
+        self.influx_cnf = self.config.get_default('metrics', 'influxdb').copy()
 
         for cnf in self.config.config.get('clouds', []):
             if cnf.get('name') == target_cloud:
@@ -174,14 +174,15 @@ class EndpointMonitor(threading.Thread):
                     self.log.exception('Error writing statistics to InfluxDB')
 
             if error or status_code >= 500:
-                self.send_alert(
-                    resource=service,
-                    value='curl -g -i -X GET %s -H '
-                          '"X-Auth-Token: ${TOKEN}" '
-                          '-H "content-type: application/json" fails' %
-                          endpoint,
-                    raw_data=str(error.message if error else response)
-                )
+                pass
+#                self.send_alert(
+#                    resource=service,
+#                    value='curl -g -i -X GET %s -H '
+#                          '"X-Auth-Token: ${TOKEN}" '
+#                          '-H "content-type: application/json" fails' %
+#                          endpoint,
+#                    raw_data=str(error.message if error else response)
+#                )
 
     def send_alert(self, resource: str, value: str,
                    raw_data: str=None) -> None:
