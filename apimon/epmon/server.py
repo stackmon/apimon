@@ -14,9 +14,7 @@ import logging
 import threading
 import time
 
-import keystoneauth1
 import openstack
-import urllib3
 
 try:
     from alertaclient.api import Client as alerta_client
@@ -150,16 +148,14 @@ class EndpointMonitor(threading.Thread):
                 self.log.debug('Got exception for endpoint %s: %s' % (endpoint,
                                                                       e))
             status_code = 0
-            if response:
+            if response is not None:
                 status_code = int(response.status_code)
-            if error or status_code >= 500:
+            elif error:
                 tags = dict(
                     method='GET',
                     service_type=service,
                     status_code=str(status_code),
                     name='discovery')
-                duration = (response.elapsed.microseconds / 1000) \
-                    if response else 0
 
                 if 'additional_metric_tags' in self.influx_cnf:
                     tags.update(self.influx_cnf['additional_metric_tags'])
@@ -168,7 +164,7 @@ class EndpointMonitor(threading.Thread):
                                                      'epmon')),
                     tags=tags,
                     fields=dict(
-                        duration=int(duration),
+                        duration=0,
                         status_code_val=int(status_code)
                     )
                 )]
@@ -177,13 +173,14 @@ class EndpointMonitor(threading.Thread):
                 except Exception:
                     self.log.exception('Error writing statistics to InfluxDB')
 
+            if error or status_code >= 500:
                 self.send_alert(
                     resource=service,
                     value='curl -g -i -X GET %s -H '
                           '"X-Auth-Token: ${TOKEN}" '
                           '-H "content-type: application/json" fails' %
                           endpoint,
-                    raw_data=str(error.message or response)
+                    raw_data=str(error.message if error else response)
                 )
 
     def send_alert(self, resource: str, value: str,
