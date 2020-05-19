@@ -145,44 +145,21 @@ class EndpointMonitor(threading.Thread):
                     timeout=5)
             except Exception as e:
                 error = e
-                self.log.debug('Got exception for endpoint %s: %s' % (endpoint,
+                self.log.error('Got exception for endpoint %s: %s' % (endpoint,
                                                                       e))
-            status_code = 0
+            status_code = -1
             if response is not None:
                 status_code = int(response.status_code)
-            elif error:
-                tags = dict(
-                    method='GET',
-                    service_type=service,
-                    status_code=str(status_code),
-                    name='discovery')
-
-                if 'additional_metric_tags' in self.influx_cnf:
-                    tags.update(self.influx_cnf['additional_metric_tags'])
-                data = [dict(
-                    measurement=(self.influx_cnf.get('measurement',
-                                                     'epmon')),
-                    tags=tags,
-                    fields=dict(
-                        duration=0,
-                        status_code_val=int(status_code)
-                    )
-                )]
-                try:
-                    self.influxdb_client.write_points(data)
-                except Exception:
-                    self.log.exception('Error writing statistics to InfluxDB')
 
             if error or status_code >= 500:
-                pass
-#                self.send_alert(
-#                    resource=service,
-#                    value='curl -g -i -X GET %s -H '
-#                          '"X-Auth-Token: ${TOKEN}" '
-#                          '-H "content-type: application/json" fails' %
-#                          endpoint,
-#                    raw_data=str(error.message if error else response)
-#                )
+                self.send_alert(
+                    resource=service,
+                    value='curl -g -i -X GET %s -H '
+                          '"X-Auth-Token: ${TOKEN}" '
+                          '-H "content-type: application/json" fails' %
+                          endpoint,
+                    raw_data=str(error.message if error else response)
+                )
 
     def send_alert(self, resource: str, value: str,
                    raw_data: str=None) -> None:

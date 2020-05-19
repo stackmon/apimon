@@ -32,7 +32,7 @@ RUN pip3 install --user -r /usr/app/requirements.txt
 
 RUN cd openstacksdk \
     && git fetch https://review.opendev.org/openstack/openstacksdk \
-    refs/changes/97/727097/4 \
+    refs/changes/97/727097/5 \
     && git checkout FETCH_HEAD \
     && python3 setup.py install --user
 
