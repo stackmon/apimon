@@ -26,7 +26,7 @@ RUN git clone https://github.com/ansible/ansible --branch stable-2.9 && \
 
 RUN cd ansible && python3 setup.py install --user
 
-ADD . /usr/app/apimon
+COPY . /usr/app/apimon
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
@@ -39,5 +39,3 @@ RUN cd openstacksdk \
 RUN cd apimon && python3 setup.py install --user
 
 ENV PATH=/root/.local/bin:$PATH
-
-#CMD ["/usr/app/entrypoint.sh"]

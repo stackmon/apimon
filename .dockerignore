@@ -1,0 +1,4 @@
+.eggs
+.tox/**
+.stestr/**
+.git

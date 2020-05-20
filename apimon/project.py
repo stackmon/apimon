@@ -92,6 +92,7 @@ class Project(object):
             self.repo = Repo(self.project_dir)
             self.refresh_git_repo()
         else:
+            self.log.debug('Checking out repository')
             self.repo = Repo.clone_from(self.repo_url, self.project_dir,
                                         recurse_submodules='.')
             self.repo.remotes.origin.pull(self.repo_ref)
@@ -118,7 +119,7 @@ class Project(object):
             self.repo.remotes.origin.update()
             origin_ref = self.repo.remotes.origin.refs[self.repo_ref]
             last_commit_remote = origin_ref.commit
-            last_commit_local = self.repo.refs[self.repo_ref].commit
+            last_commit_local = self.head.commit
             remote_newer = last_commit_remote != last_commit_local
             if remote_newer:
                 self.log.info('Found new revision in git. Update necessary')
@@ -129,7 +130,7 @@ class Project(object):
             return False
 
     def get_commit(self):
-        return self.repo.refs[self.repo_ref].commit
+        return self.heads.commit
 
     def tasks(self):
         if not self._tasks:

@@ -243,13 +243,14 @@ class Scheduler(threading.Thread):
 
         self.__executor_client.start()
 
-        self.cloud_config_gearworker.start()
         self._socket_running = True
         self._command_socket.start()
         self.__socket_thread = threading.Thread(target=self.socket_run,
                                                 name='command')
         self.__socket_thread.daemon = True
         self.__socket_thread.start()
+
+        self.cloud_config_gearworker.start()
 
     def stop(self) -> None:
         self._stopped = True

@@ -17,7 +17,6 @@ import traceback
 import time
 import socket
 import os
-import random
 import shutil
 import signal
 import subprocess
@@ -27,6 +26,13 @@ import configparser
 from pathlib import Path
 
 import gear
+
+import openstack
+
+try:
+    from alertaclient.api import Client as alerta_client
+except ImportError:
+    alerta_client = None
 
 from apimon.project import Project
 from apimon.lib import commandsocket
@@ -190,6 +196,11 @@ class AnsibleJob:
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))
 
+        self.executor_server._upload_log_file_to_swift(
+            job_log_file, self.job_id)
+
+        job_log_file.unlink()
+
         self.job.sendWorkComplete(json.dumps({'a': 'complete'}))
 
     def _base_job_data(self):
@@ -273,19 +284,19 @@ class ExecutorServer:
         self._command_running = True
         self.log.debug("Starting command processor")
 
-#        try:
-#            multiprocessing.set_start_method('spawn')
-#        except RuntimeError:
-#            # Note: During tests this can be called multiple times which
-#            # results in a runtime error. This is ok here as we've set this
-#            # already correctly.
-#            self.log.warning('Multiprocessing context has already been set')
-
         self.command_socket.start()
         self.command_thread = threading.Thread(
             target=self.run_command, name='command')
         self.command_thread.daemon = True
         self.command_thread.start()
+
+        if alerta_client:
+            alerta_ep = self.config.get_default('alerta', 'endpoint')
+            alerta_token = self.config.get_default('alerta', 'token')
+            if alerta_ep and alerta_token:
+                self.alerta = alerta_client(
+                    endpoint=alerta_ep,
+                    key=alerta_token)
 
         self.executor_worker.start()
 
@@ -360,6 +371,66 @@ class ExecutorServer:
                 self.manage_load()
             except Exception:
                 self.log.exception("Exception in governor thread:")
+            self._send_alerta_heartbeat()
+
+    def _send_alerta_heartbeat(self):
+        if self.alerta:
+            try:
+                self.alerta.heartbeat(
+                    origin='apimon.executor.%s' % self.name,
+                    tags=['apimon', 'executor'],
+                    timeout=300
+                )
+            except Exception:
+                self.log.exception('Error sending heartbeat')
+
+    def _create_logs_container(self, connection, container_name):
+        container = connection.object_store.create_container(
+            name=container_name)
+        container.set_metadata(
+            connection.object_store,
+            metadata={
+                'read_ACL': '.r:*,.rlistings',
+                'web_index': 'index.html',
+                'web_listings': 'True'
+            }
+        )
+        return container
+
+    def _upload_log_file_to_swift(self, job_log_file, job_id) -> None:
+        if self._logs_cloud and job_log_file.exists():
+            # Due to bug in OTC we need to read the file content
+            log_data = open(job_log_file, 'r').read()
+            try:
+                obj = self._logs_cloud.object_store.create_object(
+                    container=self._logs_container_name,
+                    name='{id}/{name}'.format(
+                        id=job_id,
+                        name=job_log_file.name),
+                    data=log_data)
+                obj.set_metadata(
+                    self.logs_cloud.object_store,
+                    metadata={
+                        'delete-after': str(
+                            self.config.get_default(
+                                'executor', 'log_swift_keep_time', '1209600')),
+                        'content_type': 'text/plain'
+                    })
+                return True
+            except openstack.exceptions.SDKException as e:
+                self.log.exception('Error uploading log to Swift')
+                if self.alerta:
+                    self.alerta.send_alert(
+                        severity='major',
+                        environment=self.config.alerta_env,
+                        origin=self.config.alerta_origin,
+                        service=['apimon', 'task_executor'],
+                        resource='task',
+                        event='LogUpload',
+                        value=str(e)
+                    )
+
+                return False
 
     def _flush_clouds_config(self) -> None:
         """Write clouds.yaml to FS into home dir"""
@@ -367,6 +438,15 @@ class ExecutorServer:
         clouds_loc.mkdir(parents=True, exist_ok=True)
         with open(Path(clouds_loc, 'clouds.yaml'), 'w') as f:
             yaml.dump(self._clouds_config, f, default_flow_style=False)
+
+        self._logs_cloud = openstack.connect(
+            self.config.get_default('executor', 'logs_cloud', 'swift')
+        )
+        self._logs_container_name = self.config.get_default(
+            'executor', 'logs_cloud_container', 'job_logs')
+        self._create_logs_container(
+            self._logs_cloud, self._logs_container_name
+        )
 
     def execute_ansible_job(self, job) -> None:
         """Main entry function for ansible job requests"""
