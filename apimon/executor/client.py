@@ -146,8 +146,9 @@ class ApimonGearClient(gear.Client):
             job = super(ApimonGearClient, self).handleStatusRes(packet)
         except gear.UnknownJobError:
             handle = packet.getArgument(0)
-            for build in self.__apimon_gear.builds.values():
-                if build.__apimon_gear_job.handle == handle:
+            self.log.error('Got status update for unknown job')
+            for task in self.__apimon_gear.__tasks.values():
+                if task.__gearman_job.handle == handle:
                     self.__apimon_gear.onUnknownJob(job)
 
 
@@ -200,10 +201,11 @@ class JobExecutorClient(object):
         if task.__gearman_job:
             while not self.stopped:
                 try:
-                    self.gearman.submitJob(task.__gearman_job, timeout=5,
+                    self.gearman.submitJob(task.__gearman_job, timeout=30,
                                            **kwargs)
+                    self.scheduler.task_scheduled(task)
                     return
-                except (gear.GearmanError, gear.TimeoutError):
+                except Exception:
                     self.log.debug('Exception submitting job')
                     time.sleep(2)
 
@@ -221,10 +223,11 @@ class JobExecutorClient(object):
     def onTaskCompleted(self, job, result=None) -> JobTask:
         self.log.debug('Task %s completed with %s' % (job, result))
         task = self.__tasks.get(job.unique)
+        data = getJobData(job)
         if task:
             log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
-            data = getJobData(job)
             log.debug('Task returned %s back' % data)
+            self.scheduler.task_completed(task)
             del self.__tasks[task.id]
 
             if not self.stopped and self._reschedule:
@@ -233,6 +236,16 @@ class JobExecutorClient(object):
                 self._schedule_task(task.project, task.task, task.env)
         else:
             self.log.debug('No data for job found')
+            try:
+                if data:
+                    project = data.get('project', {})
+                    env = data.get('env', {})
+                    if project is not None and env is not None:
+                        self._scheduler_task(
+                            self.scheduler._projects.get(project['name']),
+                            project['name'], project['task'], env['name'])
+            except Exception:
+                self.log.exception('Exception during recovering lost job')
         return task
 
     def onWorkStatus(self, job) -> None:
@@ -243,6 +256,7 @@ class JobExecutorClient(object):
             if not task.started:
                 self.log.info('Task %s started', task)
                 task.started = True
+                self.scheduler.task_started(task)
 
     def _prepare_task(self, project, task, env) -> JobTask:
         self.log.debug('Preparing gearman Job %s:%s:%s', project, task, env)
@@ -285,6 +299,8 @@ class JobExecutorClient(object):
                 # The task hasn't started yet
                 self.cancelJobInQueue(task)
             else:
+                self.log.info('Not cancelling job %s since it is running' %
+                              task.id)
                 self.__tasks.pop(task.id, None)
                 self._matrix.send_neo(task.project.name, task.task,
                                       task.env.name, '')
@@ -324,6 +340,9 @@ class JobExecutorClient(object):
         task = self.__tasks[job.unique]
         self.__put_task_to_queue(task, True)
 
+    def onUnknownJob(self, job) -> None:
+        self.onTaskCompleted(job, 'LOST')
+
     def cancelJobInQueue(self, task) -> None:
         log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
         job = task.__gearman_job
@@ -361,13 +380,15 @@ class JobExecutorClient(object):
         """
         current_tasks = []
         for task in list(self.__tasks.values()):
-            if task.project != project.name:
+            if task.project.name != project.name:
                 # not interesting
                 continue
             current_tasks.append(task.task)
         # Get all tasks which are not scheduled
+        self.log.debug('Current running tasks: %s' % current_tasks)
         new_tasks = [value for value in project.tasks() if value not in
                      current_tasks]
+        self.log.debug('Need to schedule newly tasks: %s' % new_tasks)
         if not new_tasks:
             return
 
@@ -377,4 +398,7 @@ class JobExecutorClient(object):
                 continue
             # reschedule all new tasks of this project
             for task in new_tasks:
-                self._schedule_task(project.name, task, item['env'])
+                self._schedule_task(
+                    project, task,
+                    self.scheduler._environments.get(item['env']),
+                )

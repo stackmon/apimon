@@ -15,7 +15,9 @@ import logging
 import threading
 import sys
 import json
+import queue
 
+import influxdb
 
 try:
     from alertaclient.api import Client as alerta_client
@@ -33,7 +35,7 @@ from apimon.lib import commandsocket
 COMMANDS = ['pause', 'resume', 'reconfig', 'stop']
 
 
-class ManagementEvent(object):
+class ManagementEvent:
     """Event for processing by main queue run loop"""
     def __init__(self):
         self._wait_event = threading.Event()
@@ -81,14 +83,26 @@ class GitRefreshEvent(ManagementEvent):
         self.project = project
 
 
-class ResultEvent(object):
+class OperationalEvent:
     """Result event"""
     pass
 
 
-class JobCompletedEvent(ResultEvent):
+class JobScheduledEvent(OperationalEvent):
+    """Job scheduled"""
+    def __init__(self, job):
+        super(JobScheduledEvent, self).__init__()
+
+
+class JobStartedEvent(OperationalEvent):
+    """Job started"""
+    def __init__(self, job):
+        super(JobStartedEvent, self).__init__()
+
+
+class JobCompletedEvent(OperationalEvent):
     """Job completed"""
-    def __init__(self, job, result):
+    def __init__(self, job):
         super(JobCompletedEvent, self).__init__()
 
 
@@ -119,8 +133,75 @@ class GitRefresh(threading.Thread):
                 return
             for name, project in self.projects.items():
                 if project.is_repo_update_necessary():
-                    project.refresh_git_repo()
-                    self.scheduler._git_updated(project)
+                    try:
+                        project.refresh_git_repo()
+                        self.scheduler._git_updated(project)
+                    except Exception:
+                        self.log.exception('Exception during updating git '
+                                           'repo')
+
+
+class Stat(threading.Thread):
+    """A thread taking care of reporting statistics"""
+    log = logging.getLogger('apimon.stat')
+
+    def __init__(self, scheduler, config):
+        threading.Thread.__init__(self)
+        self.scheduler = scheduler
+        self.config = config
+
+        self.metric_queue = queue.Queue()
+
+        self.wake_event = threading.Event()
+        self._stopped = False
+
+    def stop(self):
+        self.log.debug('Stopping stat thread')
+        self._stopped = True
+        self.wake_event.set()
+
+    def add_metrics(self, data: dict) -> None:
+        """Register metrics in the queue"""
+        self.metric_queue.put(data)
+
+    def _connect_influx(self) -> None:
+        try:
+            influx_cfg = self.config.get_section('metrics', 'influxdb')
+            if influx_cfg:
+                self.influxdb_client = influxdb.InfluxDBClient(
+                    influx_cfg.get('host', 'localhost'),
+                    influx_cfg.get('port', '8186'),
+                    influx_cfg.get('username'),
+                    influx_cfg.get('password'),
+                )
+        except Exception:
+            self.log.exception('Failed to establish connection to influxDB')
+
+    def run(self):
+        self._connect_influx()
+        while True:
+            self.wake_event.wait(
+                self.config.get_default('stat', 'interval', 5))
+            if self._stopped:
+                return
+
+            metrics = []
+
+            while True:
+                try:
+                    metric = self.metric_queue.get(False)
+                    if metric:
+                        metrics.append(metric)
+                    metric.task_done()
+                except queue.Empty:
+                    break
+
+            if metrics and self._influxdb_client:
+                self.log.debug('Metrics :%s' % metrics)
+                try:
+                    self._influxdb_client.write_points(metrics)
+                except Exception:
+                    self.log.exception('Error writing metrics to influx')
 
 
 class Scheduler(threading.Thread):
@@ -143,7 +224,7 @@ class Scheduler(threading.Thread):
         self.config = config
 
         self.management_event_queue = _queue.UniqueQueue()
-        self.result_event_queue = _queue.UniqueQueue()
+        self.operational_event_queue = _queue.UniqueQueue()
 
         command_socket = self.config.get_default(
             'scheduler', 'socket', '/var/lib/apimon/scheduler.socket')
@@ -158,6 +239,7 @@ class Scheduler(threading.Thread):
 
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
+        #self._stat_thread = Stat(self, self.config)
 
         self.cloud_config_gearworker = GearWorker(
             'APImon Scheduler',
@@ -181,18 +263,27 @@ class Scheduler(threading.Thread):
         """Load projects from config and initialize them
         """
         for item in self.config.get_section('test_projects'):
-            prj = Project(
-                name=item.get('name'),
-                repo_url=item.get('repo_url'),
-                repo_ref=item.get('repo_ref'),
-                project_type=item.get('type'),
-                location=item.get('scenarios_location'),
-                exec_cmd=item.get('exec_cmd'),
-                work_dir=self.config.get_default('scheduler',
-                                                 'work_dir', 'wrk'),
-                env=item.get('env'),
-                scenarios=item.get('scenarios')
-            )
+            project_args = {
+                'name': item.get('name'),
+                'repo_url': item.get('repo_url'),
+                'work_dir': self.config.get_default(
+                    'scheduler', 'work_dir', 'wrk')
+            }
+            if 'repo_ref' in item:
+                project_args['repo_ref'] = item.get('repo_ref')
+            if 'type' in item:
+                project_args['type'] = item.get('type')
+            if 'scenarios_location' in item:
+                project_args['scenarios_location'] = \
+                    item.get('scenarios_location')
+            if 'exec_cmd' in item:
+                project_args['exec_cmd'] = item.get('exec_cmd')
+            if 'env' in item:
+                project_args['env'] = item.get('env')
+            if 'scenarios' in item:
+                project_args['scenarios'] = item.get('scenarios')
+
+            prj = Project(**project_args)
             prj.get_git_repo()
             self._projects[prj.name] = prj
 
@@ -242,6 +333,7 @@ class Scheduler(threading.Thread):
         self._git_refresh_thread.start()
 
         self.__executor_client.start()
+        # self._stat_thread.start()
 
         self._socket_running = True
         self._command_socket.start()
@@ -258,6 +350,7 @@ class Scheduler(threading.Thread):
         self._git_refresh_thread.stop()
         self.wake_event.set()
         self._git_refresh_thread.join()
+        # self._stat_thread.join()
         self._socket_running = False
 
         self.cloud_config_gearworker.stop()
@@ -294,6 +387,21 @@ class Scheduler(threading.Thread):
         self.wake_event.set()
         event.wait()
 
+    def task_scheduled(self, task) -> None:
+        event = JobScheduledEvent(task)
+        self.operational_event_queue.put(event)
+        self.wake_event.set()
+
+    def task_started(self, task) -> None:
+        event = JobStartedEvent(task)
+        self.operational_event_queue.put(event)
+        self.wake_event.set()
+
+    def task_completed(self, task) -> None:
+        event = JobCompletedEvent(task)
+        self.operational_event_queue.put(event)
+        self.wake_event.set()
+
     def set_executor(self, executor) -> None:
         self.__executor_client = executor
 
@@ -313,9 +421,9 @@ class Scheduler(threading.Thread):
                        not self._stopped):
                     self.process_management_queue()
 
-                while (not self.result_event_queue.empty() and
+                while (not self.operational_event_queue.empty() and
                        not self._stopped):
-                    self.process_result_queue()
+                    self.process_operational_queue()
 
             except Exception:
                 self.log.exception('Exception in main handler')
@@ -342,19 +450,23 @@ class Scheduler(threading.Thread):
             event.exception(sys.exc_info())
         self.management_event_queue.task_done()
 
-    def process_result_queue(self) -> None:
+    def process_operational_queue(self) -> None:
         self.log.debug('Fetching result event')
-        event = self.result_event_queue.get()
-        self.log.debug('Processing result event %s' % event)
+        event = self.operational_event_queue.get()
+        self.log.debug('Processing operational event %s' % event)
         try:
-            if isinstance(event, JobCompletedEvent):
-                self._process_completed_job(event)
+            if isinstance(event, JobScheduledEvent):
+                self._process_scheduled_task(event)
+            elif isinstance(event, JobStartedEvent):
+                self._process_started_task(event)
+            elif isinstance(event, JobCompletedEvent):
+                self._process_completed_task(event)
             else:
-                self.log.error('Can not process result event %s' % event)
+                self.log.error('Can not process operational event %s' % event)
         except Exception:
-            self.log.exception('Exception in the result event:')
+            self.log.exception('Exception in the operational event:')
             event.exception(sys.exc_info())
-        self.result_event_queue.task_done()
+        self.operational_event_queue.task_done()
 
     def _reconfig(self, event) -> None:
         self.__executor_client.pause_rescheduling()
@@ -373,7 +485,13 @@ class Scheduler(threading.Thread):
 
         self.__executor_client.resume_rescheduling()
 
-    def _process_completed_event(self) -> None:
+    def _process_scheduled_task(self, event) -> None:
+        pass
+
+    def _process_started_task(self, event) -> None:
+        pass
+
+    def _process_completed_task(self, event) -> None:
         pass
 
     def _pause_scheduling(self, event) -> None:

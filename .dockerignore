@@ -1,4 +1,3 @@
-.eggs
+.eggs/**
 .tox/**
 .stestr/**
-.git

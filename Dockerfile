@@ -26,16 +26,18 @@ RUN git clone https://github.com/ansible/ansible --branch stable-2.9 && \
 
 RUN cd ansible && python3 setup.py install --user
 
-COPY . /usr/app/apimon
+ADD . /usr/app/apimon
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
 RUN cd openstacksdk \
     && git fetch https://review.opendev.org/openstack/openstacksdk \
-    refs/changes/97/727097/6 \
+    refs/changes/97/727097/7 \
     && git checkout FETCH_HEAD \
     && python3 setup.py install --user
 
 RUN cd apimon && python3 setup.py install --user
+
+RUN rm -rf /usr/app/ansible
 
 ENV PATH=/root/.local/bin:$PATH

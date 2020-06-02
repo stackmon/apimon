@@ -50,7 +50,8 @@ class App(object, metaclass=abc.ABCMeta):
         pass
 
     def read_config(self):
-        self.config = Config()
+        if not self.config:
+            self.config = Config()
         self.config.read(self.args.config)
 
     def setup_logging(self, section='log', parameter='config'):

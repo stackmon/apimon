@@ -90,6 +90,8 @@ class AnsibleJob:
                 Path(__file__).resolve().parent.parent,
                 'ansible', 'callback').as_posix()
 
+        self.thread = None
+
     def run(self):
         self.running = True
         self.thread = threading.Thread(target=self.execute,
@@ -107,7 +109,8 @@ class AnsibleJob:
         project_args = self.arguments.get('project')
         project = self.executor_server._projects[project_args['name']]
         # Copy project checkout to local wrk_dir
-        shutil.copytree(project.project_dir, self.job_work_dir)
+        shutil.copytree(project.project_dir, self.job_work_dir,
+                        dirs_exist_ok=True)
         self.local_project = Project(
             project.name,
             project.repo_url,
@@ -123,7 +126,10 @@ class AnsibleJob:
             self.job.sendWorkException(traceback.format_exc())
         finally:
             self.running = False
-            # shutil.rmtree(self.job_work_dir)
+            try:
+                shutil.rmtree(self.job_work_dir)
+            except Exception:
+                pass
             try:
                 self.executor_server.finish_job(self.job.unique)
             except Exception:
@@ -199,7 +205,10 @@ class AnsibleJob:
         self.executor_server._upload_log_file_to_swift(
             job_log_file, self.job_id)
 
-        job_log_file.unlink()
+        try:
+            job_log_file.unlink()
+        except Exception:
+            pass
 
         self.job.sendWorkComplete(json.dumps({'a': 'complete'}))
 
@@ -233,7 +242,7 @@ class ExecutorServer:
         self.command_map = dict(
             stop=self.stop,
             pause=self.pause,
-            resume=self.resume,
+            resume=self.resume
         )
         command_socket = self.config.get_default(
             'executor', 'socket',
@@ -254,6 +263,7 @@ class ExecutorServer:
         self._projects = {}
         self._config_version = None
         self._clouds_config = {}
+        self.alerta = None
 
         self.executor_jobs = {
             'apimon:ansible': self.execute_ansible_job
@@ -377,7 +387,7 @@ class ExecutorServer:
         if self.alerta:
             try:
                 self.alerta.heartbeat(
-                    origin='apimon.executor.%s' % self.name,
+                    origin='apimon.executor.%s' % self.hostname,
                     tags=['apimon', 'executor'],
                     timeout=300
                 )
@@ -409,7 +419,7 @@ class ExecutorServer:
                         name=job_log_file.name),
                     data=log_data)
                 obj.set_metadata(
-                    self.logs_cloud.object_store,
+                    self._logs_cloud.object_store,
                     metadata={
                         'delete-after': str(
                             self.config.get_default(
@@ -507,7 +517,9 @@ class ExecutorServer:
                 if not ok:
                     self.log.info(
                         "Unregistering due to {}".format(message))
-                    self.unregister_work()
+                    self._accepting_work = False
+                    self.executor_worker.pause()
+                    # self.unregister_work()
                     break
         else:
             reregister = True
@@ -521,11 +533,17 @@ class ExecutorServer:
             if reregister:
                 self.log.info("Re-registering as job is within its limits "
                               "{}".format(", ".join(limits)))
-                self.register_work()
+                self._accepting_work = True
+                self.executor_worker.resume()
+                # self.register_work()
 
     def finish_job(self, unique) -> None:
         """A callback after the job finished processing"""
-        del(self.job_workers[unique])
+        try:
+            del(self.job_workers[unique])
+        except Exception:
+            self.log.error('Trying to delete job data %s, which is not there' %
+                           unique)
 
     def register_work(self) -> None:
         if self._running:

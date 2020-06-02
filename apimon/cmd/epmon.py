@@ -59,7 +59,7 @@ class ApimonEndpointMonitor(apimon.cmd.App):
         self.read_config()
         self.setup_logging()
         try:
-            self.epmon.reconfigure(self.config)
+            self.epmon.reconfig(self.config)
         except Exception:
             self.log.exception('Reconfiguration failed')
 

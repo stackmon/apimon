@@ -21,34 +21,65 @@ try:
 except ImportError:
     alerta_client = None
 
-import influxdb
-
 from apimon.lib import commandsocket
 
 
-COMMANDS = ['stop', 'pause', 'resume']
+COMMANDS = ['stop', 'pause', 'resume', 'reconfig']
 
 
 class EndpointMonitor(threading.Thread):
     """A thread that checks endpoints. """
     log = logging.getLogger("apimon.EndpointMonitor")
 
-    def __init__(self, config, target_cloud, alerta):
+    def __init__(self, config, target_cloud, alerta: dict) -> None:
         threading.Thread.__init__(self)
         self.daemon = True
         self.wake_event = threading.Event()
         self._stopped = False
         self._pause = False
         self.config = config
-        self.target_cloud = target_cloud
         self.alerta = alerta
-        auth_part = None
         self.conn = None
+        self.service_override = None
+        self.interval = 5
 
         self.influx_cnf = self.config.get_default('metrics', 'influxdb').copy()
+        self.target_cloud = target_cloud
+
+        self.reload()
+
+    def stop(self) -> None:
+        self._stopped = True
+        self.wake_event.set()
+
+    def pause(self) -> None:
+        self._pause = True
+
+    def resume(self) -> None:
+        self._pause = False
+
+    def reload(self) -> None:
+        for cl in self.config.get_default('epmon', 'clouds', []):
+            if isinstance(cl, dict):
+                if len(cl.items()) != 1:
+                    raise RuntimeError(
+                        'Can not parse epmon clouds configuration')
+                (target_cloud, vals) = list(cl.items())[0]
+            else:
+                (target_cloud, vals) = cl, {}
+            if target_cloud != self.target_cloud:
+                continue
+            self.service_override = vals.get('service_override')
+            try:
+                self.interval = int(vals.get('interval', 5))
+            except Exception:
+                self.interval = 5
+            self.log.debug('Need to monitor cloud %s' % target_cloud)
+
+        auth_part = None
 
         for cnf in self.config.config.get('clouds', []):
-            if cnf.get('name') == target_cloud:
+            if cnf.get('name') == self.target_cloud:
                 auth_part = cnf.get('data')
                 if 'additional_metric_tags' in auth_part:
                     self.influx_cnf['additional_metric_tags'] = \
@@ -67,26 +98,7 @@ class EndpointMonitor(threading.Thread):
             **auth_part)
         self.region._influxdb_config = self.influx_cnf
 
-    def stop(self) -> None:
-        self._stopped = True
-        self.wake_event.set()
-
-    def pause(self) -> None:
-        self._pause = True
-
-    def resume(self) -> None:
-        self._pause = False
-
-    def _connect_influx(self) -> None:
-        try:
-            self.influxdb_client = influxdb.InfluxDBClient(
-                self.influx_cnf['host'],
-                self.influx_cnf['port'],
-                self.influx_cnf['username'],
-                self.influx_cnf['password']
-            )
-        except Exception:
-            self.log.exception('Failed to establish connection to influxDB')
+        self._connect()
 
     def run(self) -> None:
         self._connect()
@@ -111,12 +123,11 @@ class EndpointMonitor(threading.Thread):
                     except Exception:
                         self.log.exception('Error sending heartbeat')
 
-                time.sleep(5)
+                time.sleep(self.interval)
             except Exception:
                 self.log.exception("Exception checking endpoints:")
 
     def _connect(self):
-        self._connect_influx()
         try:
             self.conn = openstack.connection.Connection(
                 config=self.region,
@@ -135,31 +146,50 @@ class EndpointMonitor(threading.Thread):
         eps = self.conn.config.get_service_catalog().get_endpoints().items()
         for service, data in eps:
             endpoint = data[0]['url']
-            response = None
-            error = None
-            try:
-                client = self.conn.config.get_session_client(service)
-                response = client.get(
-                    endpoint,
-                    headers={'content-type': 'application/json'},
-                    timeout=5)
-            except Exception as e:
-                error = e
-                self.log.error('Got exception for endpoint %s: %s' % (endpoint,
-                                                                      e))
-            status_code = -1
-            if response is not None:
-                status_code = int(response.status_code)
+            client = self.conn.config.get_session_client(service)
+            if (self.service_override is not None
+                    and service in self.service_override):
+                urls = self.service_override.get(service)
+                if urls:
+                    for url in urls:
+                        if isinstance(url, str):
+                            self._query_endpoint(client, service,
+                                                 endpoint, url)
+                        else:
+                            self.log.error('Wrong configuration, '
+                                           'service_override must be list of '
+                                           'string urls')
+                else:
+                    self.log.debug('Skipping querying service %s' % service)
+            else:
+                self._query_endpoint(client, service, endpoint, endpoint)
 
-            if error or status_code >= 500:
-                self.send_alert(
-                    resource=service,
-                    value='curl -g -i -X GET %s -H '
-                          '"X-Auth-Token: ${TOKEN}" '
-                          '-H "content-type: application/json" fails' %
-                          endpoint,
-                    raw_data=str(error.message if error else response)
-                )
+    def _query_endpoint(self, client, service, endpoint, url):
+        response = None
+        error = None
+        try:
+            response = client.get(
+                url,
+                headers={'content-type': 'application/json'},
+                timeout=5)
+        except Exception as e:
+            error = e
+            self.log.error('Got exception for endpoint %s: %s' % (url,
+                                                                  e))
+        status_code = -1
+        if response is not None:
+            status_code = int(response.status_code)
+
+        if error or status_code >= 500:
+            self.send_alert(
+                resource=service,
+                value='curl -g -i -X GET %s -H '
+                      '"X-Auth-Token: ${TOKEN}" '
+                      '-H "content-type: application/json" fails' %
+                      openstack.utils.urljoin(endpoint, url) if endpoint != url
+                      else endpoint,
+                raw_data=str(error.message if error else response)
+            )
 
     def send_alert(self, resource: str, value: str,
                    raw_data: str=None) -> None:
@@ -192,6 +222,7 @@ class EndpointMonitorServer:
             stop=self.stop,
             pause=self.pause,
             resume=self.resume,
+            reconfig=self.reconfig
         )
         command_socket = self.config.get_default(
             'epmon', 'socket',
@@ -226,9 +257,18 @@ class EndpointMonitorServer:
         self._connect_alerta()
 
         for cl in self.config.get_default('epmon', 'clouds', []):
-            self.log.debug('Need to monitor cloud %s' % cl)
-            self._monitors[cl] = EndpointMonitor(self.config, cl, self.alerta)
-            self._monitors[cl].start()
+            if isinstance(cl, dict):
+                if len(cl.items()) != 1:
+                    raise RuntimeError(
+                        'Can not parse epmon clouds configuration')
+                target_cloud = list(cl.keys())[0]
+            else:
+                target_cloud = cl
+            self.log.debug('Need to monitor cloud %s' % target_cloud)
+
+            self._monitors[target_cloud] = EndpointMonitor(
+                self.config, target_cloud=target_cloud, alerta=self.alerta)
+            self._monitors[target_cloud].start()
 
     def stop(self):
         self.log.debug("Stopping")
@@ -259,6 +299,16 @@ class EndpointMonitorServer:
 
         for mon in monitors:
             mon.pause()
+
+    def reconfig(self, config=None) -> None:
+        self.log.debug('Reconfiguration')
+        if not config:
+            self.config.read()
+        with self.run_lock:
+            monitors = list(self._monitors.values())
+
+        for mon in monitors:
+            mon.reload()
 
     def resume(self):
         self.log.debug('Resuming')

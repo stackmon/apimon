@@ -17,6 +17,7 @@ import yaml
 class Config(object):
     def __init__(self):
         self._fp = None
+        self.config = None
 
     def _find_config(self, path=None):
         if not path and self._fp:

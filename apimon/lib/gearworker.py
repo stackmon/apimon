@@ -82,7 +82,7 @@ class GearWorker:
 
     def pause(self):
         self._accepting = False
-        self.gearman.stopWaitingForJobs()
+#        self.gearman.stopWaitingForJobs()
 #        self.unregister()
 
     def resume(self):

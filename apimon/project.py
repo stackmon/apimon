@@ -38,8 +38,6 @@ class Project(object):
         for (k, v) in kwargs.items():
             setattr(self, k, v)
 
-        self.log.debug('exec cmd is %s' % self.exec_cmd)
-
     def _set_work_dir(self, work_dir):
         self.work_dir = work_dir
         self.project_dir = Path(self.work_dir, self.name)
@@ -102,6 +100,8 @@ class Project(object):
         try:
             if not self.repo:
                 self.repo = self.get_git_repo()
+            self.repo.remotes.origin.update()
+            self.repo.head.reset(working_tree=True)
             self.repo.remotes.origin.pull(
                 self.repo_ref, recurse_submodules=recurse_submodules)
         except Exception:
@@ -119,18 +119,18 @@ class Project(object):
             self.repo.remotes.origin.update()
             origin_ref = self.repo.remotes.origin.refs[self.repo_ref]
             last_commit_remote = origin_ref.commit
-            last_commit_local = self.head.commit
+            last_commit_local = self.repo.head.commit
             remote_newer = last_commit_remote != last_commit_local
             if remote_newer:
                 self.log.info('Found new revision in git. Update necessary')
             return remote_newer
         except Exception:
             self.log.exception('Cannot update git remote')
-            self.repo = None
+#            self.repo = None
             return False
 
     def get_commit(self):
-        return self.heads.commit
+        return self.repo.head.commit
 
     def tasks(self):
         if not self._tasks:
