@@ -498,7 +498,7 @@ class CallbackModule(CallbackBase):
                     host=hostname, status=status, msg=msg))
         else:
             self._log("{host} | {status}".format(
-                host=hostname, status=status, msg=msg))
+                host=hostname, status=status))
         if result_dict:
             result_string = json.dumps(result_dict, indent=2, sort_keys=True)
             for line in result_string.split('\n'):

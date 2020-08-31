@@ -239,7 +239,7 @@ class Scheduler(threading.Thread):
 
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
-        #self._stat_thread = Stat(self, self.config)
+        # self._stat_thread = Stat(self, self.config)
 
         self.cloud_config_gearworker = GearWorker(
             'APImon Scheduler',
