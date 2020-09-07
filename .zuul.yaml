@@ -32,6 +32,7 @@
       jobs:
         - tox-pep8
         - apimon-build-image
+        - apimon-upload-image
     gate:
       jobs:
         - tox-pep8
