@@ -18,10 +18,21 @@ import yaml
 from apimon_executor import project
 
 
-class ExecutorConfig(object):
+class Server(object):
+    def __init__(self, host, port, ssl_key, ssl_cert, ssl_ca):
+        self.host = host
+        self.port = port
+        self.ssl_key = ssl_key
+        self.ssl_cert = ssl_cert
+        self.ssl_ca = ssl_ca
+
+
+class Config(object):
 
     def __init__(self, args):
         self.args = args
+        self.gear_servers = []
+        self._config = {}
         self.read()
 
     def read(self):
@@ -29,20 +40,20 @@ class ExecutorConfig(object):
 
         with open(self.args.config, 'r') as f:
             global_config = yaml.load(f, Loader=yaml.SafeLoader)
-        if 'executor' in global_config:
+            self._config = global_config
+        if 'executor' in self._config:
             executor_cfg = global_config['executor']
 
         self.work_dir = executor_cfg.get('work_dir', 'wrk')
 
-        for item in executor_cfg.get('test_projects', {}):
+        for item in self._config.get('test_projects', {}):
             prj = project.Project(
                 name=item.get('name'),
                 repo_url=item.get('repo_url'),
-                repo_ref=item.get('repo_ref', 'master'),
-                project_type=item.get('type', 'ansible'),
-                location=item.get('scenarios_location', 'playbooks'),
-                exec_cmd=item.get('exec_cmd', 'ansible-playbook -i '
-                                  'inventory/testing %s'),
+                repo_ref=item.get('repo_ref'),
+                project_type=item.get('type'),
+                location=item.get('scenarios_location'),
+                exec_cmd=item.get('exec_cmd'),
                 work_dir=self.work_dir,
                 env=item.get('env'),
                 scenarios=item.get('scenarios')
@@ -53,7 +64,7 @@ class ExecutorConfig(object):
                                          getattr(self.args, 'simulate', False))
         log_config = executor_cfg.get('log', {})
         self.log_config = log_config.get(
-            'log_config',
+            'config',
             '/usr/app/task_executor/etc/logging.conf')
         job_logs_config = log_config.get('jobs')
         log_fs_config = job_logs_config.get('fs', {})
@@ -83,6 +94,16 @@ class ExecutorConfig(object):
         else:
             logging.basicConfig(level=logging.INFO)
 
+        for gear in executor_cfg.get('gear'):
+            host = gear.get('host')
+            port = gear.get('port', 4730)
+            ssl_key = gear.get('ssl_key')
+            ssl_cert = gear.get('ssl_cert')
+            ssl_ca = gear.get('ssl_ca')
+            self.gear_servers.append(
+                Server(host, port, ssl_key, ssl_cert, ssl_ca)
+            )
+
         alerta = executor_cfg.get('alerta')
         if alerta:
             self.alerta_endpoint = alerta.get('endpoint')
@@ -94,3 +115,10 @@ class ExecutorConfig(object):
             self.alerta_token = None
             self.alerta_env = None
             self.alerta_origin = None
+
+    def get_default(self, section, var, default=None):
+        print('config is %s' % self._config)
+        if section not in self._config:
+            print('return default')
+            return default
+        return self._config[section].get(var, default)

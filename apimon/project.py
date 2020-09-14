@@ -19,10 +19,12 @@ from git import Repo
 
 class Project(object):
 
-    log = logging.getLogger('apimon_executor.project')
+    log = logging.getLogger('apimon.Project')
 
-    def __init__(self, name, repo_url, repo_ref, project_type, location,
-                 exec_cmd, work_dir, **kwargs):
+    def __init__(self, name, repo_url, repo_ref='master',
+                 project_type='ansible', location='playbooks',
+                 exec_cmd='ansible-playbook -i inventory/testing %s',
+                 work_dir='wrk', **kwargs):
         self.name = name
         self.repo_url = repo_url
         self.repo_ref = repo_ref
@@ -32,8 +34,13 @@ class Project(object):
         self.work_dir = work_dir
         self.project_dir = Path(self.work_dir, name)
         self.repo = None
+        self._tasks = []
         for (k, v) in kwargs.items():
             setattr(self, k, v)
+
+    def _set_work_dir(self, work_dir):
+        self.work_dir = work_dir
+        self.project_dir = Path(self.work_dir, self.name)
 
     def _ansible_galaxy_install(self, object_type='role',
                                 requirements_file='requirements.yml'):
@@ -56,7 +63,11 @@ class Project(object):
 
         return proc.returncode
 
-    def prepare(self):
+    def prepare(self, work_dir=None):
+        if work_dir:
+            self._set_work_dir(work_dir)
+        if not self.work_dir:
+            raise RuntimeError('Work dir is not set')
         self.repo = self.get_git_repo()
         # Try to install requirements
         requirements_file = Path(self.project_dir, 'requirements.yml')
@@ -69,23 +80,30 @@ class Project(object):
     def get_git_repo(self):
         """Get a repository object
         """
+        if not self.project_dir:
+            raise RuntimeError('Project work dir is not set')
         self.log.debug('Getting git repository: %s' % self.repo_url)
+        if self.repo:
+            return self.repo
         git_path = Path(self.project_dir, '.git')
         if git_path.exists():
             self.repo = Repo(self.project_dir)
             self.refresh_git_repo()
         else:
+            self.log.debug('Checking out repository')
             self.repo = Repo.clone_from(self.repo_url, self.project_dir,
                                         recurse_submodules='.')
             self.repo.remotes.origin.pull(self.repo_ref)
         return self.repo
 
-    def refresh_git_repo(self):
+    def refresh_git_repo(self, recurse_submodules=True):
         try:
             if not self.repo:
                 self.repo = self.get_git_repo()
-            self.repo.remotes.origin.pull(self.repo_ref,
-                                          recurse_submodules=True)
+            self.repo.remotes.origin.update()
+            self.repo.head.reset(working_tree=True)
+            self.repo.remotes.origin.pull(
+                self.repo_ref, recurse_submodules=recurse_submodules)
         except Exception:
             self.log.exception('Cannot update repository')
 
@@ -96,37 +114,64 @@ class Project(object):
         """
         self.log.debug('Checking whether there are remote changes in git')
         try:
+            if not self.repo:
+                self.get_git_repo()
             self.repo.remotes.origin.update()
             origin_ref = self.repo.remotes.origin.refs[self.repo_ref]
             last_commit_remote = origin_ref.commit
-            last_commit_local = self.repo.refs[self.repo_ref].commit
-            return last_commit_remote != last_commit_local
+            last_commit_local = self.repo.head.commit
+            remote_newer = last_commit_remote != last_commit_local
+            if remote_newer:
+                self.log.info('Found new revision in git. Update necessary')
+            return remote_newer
         except Exception:
             self.log.exception('Cannot update git remote')
+#            self.repo = None
             return False
 
+    def get_commit(self):
+        return self.repo.head.commit
+
     def tasks(self):
-        self.log.debug('Looking for tasks')
-        if hasattr(self, 'scenarios') and self.scenarios:
+        if not self._tasks:
+            self._find_tasks()
+        for task in self._tasks:
+            yield task
+
+    def _find_tasks(self):
+        """Identify tasks that can be scheduled"""
+        self._tasks = []
+        if False and hasattr(self, 'scenarios') and self.scenarios:
+            # NOTE(gtema): disabled for now
             for scenario in self.scenarios:
                 scenario_file = Path(self.project_dir,
                                      self.tests_location, scenario)
                 if scenario_file.exists():
-                    yield scenario_file.relative_to(
-                        self.project_dir).as_posix()
+                    self._tasks.append(scenario_file.relative_to(
+                        self.project_dir).as_posix())
                 else:
                     self.log.warning('Requested scenario %s does not exist',
                                      scenario)
         else:
-            for file in Path(
+            for scenario in Path(
                     self.project_dir,
                     self.tests_location).glob('scenario*.yaml'):
-                self.log.debug('Scheduling %s', file)
-                yield file.relative_to(self.project_dir).as_posix()
+                self._tasks.append(
+                    scenario.relative_to(self.project_dir).as_posix())
 
     def get_exec_cmd(self, task):
         return self.exec_cmd % (task)
 
     def is_task_valid(self, task):
         task_path = Path(self.project_dir, task)
-        return task_path.exists()
+        exists = task_path.exists()
+        if not exists:
+            return False
+        elif hasattr(self, 'scenarios') and self.scenarios:
+            if task in [Path(self.tests_location, value).as_posix() for value
+                        in self.scenarios]:
+                return True
+            else:
+                return False
+        else:
+            return True

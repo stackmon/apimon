@@ -1,0 +1,44 @@
+---
+
+- job:
+    name: apimon-build-image
+    parent: build-docker-image
+    description: Build apimon container image
+    timeout: 2700 # 45 minutes
+    provides: apimon-container-image
+    vars: &apimon_image_vars
+      docker_images:
+        - context: .
+          repository: otcinfra/apimon
+          tags:
+            # If zuul.tag is defined: [ '3', '3.19', '3.19.0' ].  Only works for 3-component tags.
+            # Otherwise: ['latest']
+            &imagetag "{{ zuul.tag is defined | ternary([zuul.get('tag', '').split('.')[0], '.'.join(zuul.get('tag', '').split('.')[:2]), zuul.get('tag', '')], ['latest']) }}"
+
+- job:
+    name: apimon-upload-image
+    parent: otcinfra-upload-image
+    provides: apimon-container-image
+    vars: *apimon_image_vars
+
+- job:
+    name: apimon-promote-image
+    parent: otcinfra-promote-image
+    vars: *apimon_image_vars
+
+- project:
+    merge-mode: squash-merge
+    check:
+      jobs:
+        - tox-pep8
+        - apimon-build-image
+    check-post:
+      jobs:
+        - apimon-upload-image
+    gate:
+      jobs:
+        - tox-pep8
+        - apimon-upload-image
+    promote:
+      jobs:
+        - apimon-promote-image

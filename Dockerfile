@@ -10,31 +10,34 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM fedora:30
+FROM fedora:32
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
-    install -y git gcc python3-devel nmap-ncat procps-ng
+    install -y git gcc python3-devel python3-setuptools python3-pip nmap-ncat procps-ng
 
 WORKDIR /usr/app
 ENV PATH=/root/.local/bin:$PATH
-RUN mkdir -p /var/log/executor
+RUN mkdir -p /var/{lib/apimon,log/apimon}
 
 COPY ./requirements.txt /usr/app/requirements.txt
-
-ADD . /usr/app/task_executor
 
 RUN git clone https://github.com/ansible/ansible --branch stable-2.9 && \
     git clone https://review.opendev.org/openstack/openstacksdk
 
-RUN cd openstacksdk && python3 setup.py install --user
 RUN cd ansible && python3 setup.py install --user
+
+ADD . /usr/app/apimon
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
-RUN cd task_executor && python3 setup.py install --user
+RUN cd openstacksdk \
+    && git fetch https://review.opendev.org/openstack/openstacksdk \
+    refs/changes/97/727097/7 \
+    && git checkout FETCH_HEAD \
+    && python3 setup.py install --user
 
-COPY ./scripts/entrypoint.sh /usr/app
+RUN cd apimon && python3 setup.py install --user
+
+RUN rm -rf /usr/app/ansible
 
 ENV PATH=/root/.local/bin:$PATH
-
-CMD ["/usr/app/entrypoint.sh"]
