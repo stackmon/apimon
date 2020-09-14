@@ -70,6 +70,7 @@ class ExecutorExecuteWorker(gear.TextWorker):
 
 
 class AnsibleJob:
+    """Base functionality of the ansible project"""
 
     def __init__(self, executor_server, job):
         self.executor_server = executor_server
@@ -152,6 +153,7 @@ class AnsibleJob:
             config.write(f)
 
     def _execute(self):
+        """Execute the task"""
         # report that job has been taken
         self.job.sendWorkData(json.dumps(self._base_job_data()))
 
@@ -188,6 +190,132 @@ class AnsibleJob:
                                        env=env,
                                        cwd=self.job_work_dir,
                                        restore_signals=False)
+
+            # Read the output
+            for line in process.stdout:
+                self.log.debug('%s', line.decode('utf-8'))
+            stderr = process.stderr.read()
+            if stderr:
+                self.log.error('%s', stderr.decode('utf-8'))
+
+            # Wait for child process to finish
+            process.wait()
+
+        else:
+            self.log.debug('Simulating execution of %s in %s' % (cmd, env))
+
+        self.executor_server._upload_log_file_to_swift(
+            job_log_file, self.job_id)
+
+        try:
+            job_log_file.unlink()
+        except Exception:
+            pass
+
+        self.job.sendWorkComplete(json.dumps({'a': 'complete'}))
+
+    def _base_job_data(self):
+        return {
+            # TODO(mordred) worker_name is needed as a unique name for the
+            # client to use for cancelling jobs on an executor. It's
+            # defaulting to the hostname for now, but in the future we
+            # should allow setting a per-executor override so that one can
+            # run more than one executor on a host.
+            'worker_name': self.executor_server.name,
+            'worker_hostname': self.executor_server.hostname,
+        }
+
+
+class MiscJob:
+    """Base functionality of the misc project"""
+
+    def __init__(self, executor_server, job):
+        self.executor_server = executor_server
+        self.job = job
+        self.arguments = json.loads(job.arguments)
+        self.job_id = self.arguments.get('job_id')
+
+        logger = logging.getLogger("apimon.MiscJob")
+        self.log = get_annotated_logger(
+            logger, job.unique, self.job_id)
+
+        self.job_work_dir = Path(
+            self.executor_server.config.get_default(
+                'executor', 'work_dir'), job.unique)
+
+        self.thread = None
+
+    def run(self):
+        self.running = True
+        self.thread = threading.Thread(target=self.execute,
+                                       name='job-%s' % self.job.unique)
+        self.thread.start()
+
+    def stop(self):
+        pass
+
+    def wait(self):
+        if self.thread:
+            self.thread.join()
+
+    def _prepare_local_work_dir(self):
+        project_args = self.arguments.get('project')
+        project = self.executor_server._projects[project_args['name']]
+        # Copy project checkout to local wrk_dir
+        shutil.copytree(project.project_dir, self.job_work_dir,
+                        dirs_exist_ok=True)
+        self.local_project = Project(
+            project.name,
+            project.repo_url,
+            exec_cmd=project.exec_cmd)
+
+    def execute(self):
+        try:
+            self._prepare_local_work_dir()
+            self._execute()
+        except Exception:
+            self.log.exception("Exception while executing job")
+            self.job.sendWorkException(traceback.format_exc())
+        finally:
+            self.running = False
+            try:
+                shutil.rmtree(self.job_work_dir)
+            except Exception:
+                pass
+            try:
+                self.executor_server.finish_job(self.job.unique)
+            except Exception:
+                self.log.exception("Error finalizing job thread:")
+
+    def _execute(self):
+        # report that job has been taken
+        self.job.sendWorkData(json.dumps(self._base_job_data()))
+
+        self.job.sendWorkStatus(0, 100)
+
+        job_log_dir = Path(self.job_work_dir)
+        job_log_dir.mkdir(parents=True, exist_ok=True)
+        # Generate job log config
+        job_log_file = Path(job_log_dir, 'job-output.txt')
+        self.job.sendWorkStatus(1, 100)
+
+        env = os.environ.copy()
+        env['TASK_EXECUTOR_JOB_ID'] = self.job_id
+        env.update(self.arguments.get('env').get('vars'))
+
+        cmd = (self.local_project.get_exec_cmd(
+            self.arguments['project']['task'])).split(' ')
+        if not self.executor_server.config.get_default(
+                'executor', 'dry_run', False):
+            self.log.debug('Starting execution of %s' % cmd)
+            with open(job_log_file, 'w') as log_fd:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=log_fd, stderr=subprocess.STDOUT,
+                    preexec_fn=preexec_function,
+                    env=env,
+                    cwd=self.job_work_dir,
+                    restore_signals=False)
 
             # Read the output
             for line in process.stdout:
@@ -266,7 +394,8 @@ class ExecutorServer:
         self.alerta = None
 
         self.executor_jobs = {
-            'apimon:ansible': self.execute_ansible_job
+            'apimon:ansible': self.execute_ansible_job,
+            'apimon:misc': self.execute_misc_job
         }
 
         self.executor_worker = GearWorker(
@@ -500,6 +629,53 @@ class ExecutorServer:
             project.prepare()
 
         self.job_workers[job.unique] = AnsibleJob(self, job)
+        self.manage_load()
+        self.job_workers[job.unique].run()
+        # NOTE(gtema): sleep a bit not to accept all jobs immediately on start
+        time.sleep(1)
+
+    def execute_misc_job(self, job) -> None:
+        """Main entry function for misc job requests"""
+        args = json.loads(job.arguments)
+        job_id = args.get('job_id')
+
+        log = get_annotated_logger(self.log, job.unique, job_id)
+
+        log.debug('Got %s job: %s', job.name, job.unique)
+
+        config_version = args.get('config_version')
+        if config_version != self._config_version:
+            log.debug('Requesting clouds config')
+            self._get_clouds_config(config_version)
+            self._flush_clouds_config()
+
+        project_args = args.get('project')
+
+        if not project_args:
+            raise RuntimeError('Job not supported')
+
+        project = self._projects.get(project_args.get('name'))
+
+        if not project:
+            project = Project(
+                name=project_args.get('name'),
+                repo_url=project_args.get('url'),
+                repo_ref=project_args.get('ref'),
+                exec_cmd=project_args.get('exec_cmd'),
+                work_dir=self.config.get_default(
+                    'executor', 'work_dir'),
+                commit=project_args.get('commit')
+            )
+            project.get_git_repo()
+            project.prepare()
+            self._projects[project.name] = project
+        if str(project.get_commit()) != \
+                project_args.get('commit'):
+            self.log.debug('current commit is %s' % project.get_commit())
+            project.refresh_git_repo()
+            project.prepare()
+
+        self.job_workers[job.unique] = MiscJob(self, job)
         self.manage_load()
         self.job_workers[job.unique].run()
         # NOTE(gtema): sleep a bit not to accept all jobs immediately on start

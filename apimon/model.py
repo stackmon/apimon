@@ -67,21 +67,6 @@ class TestEnvironment(object):
         self.env = None
         if 'env' in kwargs:
             self.env = kwargs.get('env')
-#        self.clouds = kwargs.get('clouds')
-#        influx_conf = config.get_default('metrics', 'influxdb', {})
-#        creds = {'clouds': {}}
-#        for cl in kwargs.get('clouds'):
-#            cloud_conf = clouds_config.get(cl)
-#            if not cloud_conf:
-#                raise RuntimeError('Can not find cloud %s' % cl)
-#            creds['clouds'][cl] = cloud_conf.data
-#        self.clouds_content = {
-#            'clouds': creds
-#        }
-#        if influx_conf:
-#            self.clouds_content['metrics'] = {
-#                'influxdb': influx_conf
-#            }
 
     def __repr__(self):
         return ('<TestEnvironment 0x%x Name: %s>' %

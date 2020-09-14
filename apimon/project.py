@@ -35,6 +35,7 @@ class Project(object):
         self.project_dir = Path(self.work_dir, name)
         self.repo = None
         self._tasks = []
+        self.scenarios = []
         for (k, v) in kwargs.items():
             setattr(self, k, v)
 
@@ -63,7 +64,8 @@ class Project(object):
 
         return proc.returncode
 
-    def prepare(self, work_dir=None):
+    def prepare(self, work_dir=None) -> int:
+        """Do some preparation steps before executing the task"""
         if work_dir:
             self._set_work_dir(work_dir)
         if not self.work_dir:
@@ -76,8 +78,9 @@ class Project(object):
             rc = self._ansible_galaxy_install('role', requirements_file)
             rc = self._ansible_galaxy_install('collection', requirements_file)
             return rc
+        return 0
 
-    def get_git_repo(self):
+    def get_git_repo(self) -> Repo:
         """Get a repository object
         """
         if not self.project_dir:
@@ -97,6 +100,7 @@ class Project(object):
         return self.repo
 
     def refresh_git_repo(self, recurse_submodules=True):
+        """Refresh git repository"""
         try:
             if not self.repo:
                 self.repo = self.get_git_repo()
@@ -130,9 +134,11 @@ class Project(object):
             return False
 
     def get_commit(self):
+        """Returns commit hash of the HEAD"""
         return self.repo.head.commit
 
     def tasks(self):
+        """Return generator of tasks in the project"""
         if not self._tasks:
             self._find_tasks()
         for task in self._tasks:
@@ -160,9 +166,11 @@ class Project(object):
                     scenario.relative_to(self.project_dir).as_posix())
 
     def get_exec_cmd(self, task):
+        """Render the execution command for the task"""
         return self.exec_cmd % (task)
 
     def is_task_valid(self, task):
+        """Evaluate whether we can run the task"""
         task_path = Path(self.project_dir, task)
         exists = task_path.exists()
         if not exists:

@@ -56,12 +56,21 @@ test_projects:
     scenarios_location: playbooks
     environments:
       - prod
+  - name: quality
+    repo_url: https://github.com/opentelekomcloud-infra/test-scenarios
+    repo_ref: master
+    scenarios_location: tests/quality
+    type: misc
 test_matrix:
   - env: prod
     project: apimon
   - env: preprod
     project: apimon
     test_interval: 10
+  - env: prod
+    project: quality
+    tasks:
+      - sc_quality
 metrics:
   influxdb:
      host: localhost

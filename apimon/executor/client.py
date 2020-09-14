@@ -331,8 +331,12 @@ class JobExecutorClient(object):
             if not env:
                 raise ValueError('Environment %s referred in matrix is not '
                                  'known', item['env'])
-            for task in project.tasks():
-                self._matrix.send_neo(project.name, task, env.name)
+            if 'tasks' not in item:
+                for task in project.tasks():
+                    self._matrix.send_neo(project.name, task, env.name)
+            else:
+                for task in item.get('tasks', []):
+                    self._matrix.send_neo(project.name, task, env.name)
 
     def onDisconnect(self, job) -> None:
         """Disconnect called for each job with the lost server"""
@@ -397,8 +401,11 @@ class JobExecutorClient(object):
             if item['project'] != project.name:
                 continue
             # reschedule all new tasks of this project
-            for task in new_tasks:
-                self._schedule_task(
-                    project, task,
-                    self.scheduler._environments.get(item['env']),
-                )
+            if 'tasks' not in item:
+                # In in the matrix we set tasks - do not scheduler newly
+                # appeared ones
+                for task in new_tasks:
+                    self._schedule_task(
+                        project, task,
+                        self.scheduler._environments.get(item['env']),
+                    )
