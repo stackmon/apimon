@@ -32,8 +32,6 @@
       jobs:
         - tox-pep8
         - apimon-build-image
-        - otcinfra-upload-image2
-          #            vars: *apimon_image_vars
     gate:
       jobs:
         - tox-pep8
