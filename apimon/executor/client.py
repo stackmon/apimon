@@ -265,7 +265,7 @@ class JobExecutorClient(object):
 
         task = JobTask(uuid.uuid4().hex,
                        project, task, env)
-        task.job_id = generate_job_id()
+        task.job_id = uuid.uuid4().hex
 
         gearman_job = gear.TextJob(
             'apimon:ansible',
