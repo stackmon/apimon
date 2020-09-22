@@ -10,14 +10,12 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 #
+import datetime
 import logging
 import json
-import random
-import string
+import os
 import threading
-import queue
 import time
-import uuid
 
 import gear
 
@@ -33,11 +31,6 @@ def getJobData(job) -> dict:
     if not d:
         return {}
     return json.loads(d)
-
-
-def generate_job_id() -> str:
-    return ''.join([random.choice(string.ascii_letters + string.digits) for n
-                    in range(12)])
 
 
 class GearmanCleanup(threading.Thread):
@@ -67,7 +60,7 @@ class GearmanCleanup(threading.Thread):
                 self.log.exception("Exception checking builds:")
 
 
-class TaskRescheduler(threading.Thread):
+class ScheduleWatcher(threading.Thread):
     """A thread that get's prepared tasks and schedules them to gearman
 
     On a callback (i.e. broken connection) we have not much capabilities
@@ -75,36 +68,45 @@ class TaskRescheduler(threading.Thread):
     and this thread is taking care of passing them to gearman again
     """
 
-    log = logging.getLogger('apimon.TaskRescheduler')
+    log = logging.getLogger('apimon.RescheduleWatcher')
 
-    def __init__(self, client, tasks):
+    def __init__(self, client, matrix):
         threading.Thread.__init__(self)
         self.daemon = True
         self.client = client
-        self.tasks = tasks
+        self.matrix = matrix
         self._stopped = False
+        self._paused = False
         self.wake_event = threading.Event()
+
+        self._tick_interval = 1  # Seconds
 
     def stop(self) -> None:
         self._stopped = True
         self.wake_event.set()
 
+    def pause(self) -> None:
+        self._paused = True
+
+    def unpause(self) -> None:
+        self._paused = False
+
     def run(self) -> None:
         while True:
-            self.wake_event.wait(300)
-            try:
-                item = self.tasks.get(False)
-                if item:
-                    # We wait inside to ensure we schedule successfully,
-                    # so no need for any checks here
-                    self.client._submit_task(item)
-                    self.tasks.task_done()
-            except queue.Empty:
-                self.wake_event.clear()
-                pass
-
+            self.wake_event.wait(self._tick_interval)
             if self._stopped:
                 return
+
+            if self._paused:
+                continue
+            # 1. find item next on schedule
+            # 2. prepare job
+            # 3. send job
+            for task in list(self.matrix.tasks()):
+                current_time = datetime.datetime.now()
+                if not task.scheduled_at and task.next_run_at <= current_time:
+                    # unless it is already "running" and time is up - start it
+                    self.client._submit_gear_task(task)
 
 
 class ApimonGearClient(gear.Client):
@@ -148,11 +150,14 @@ class ApimonGearClient(gear.Client):
             handle = packet.getArgument(0)
             self.log.error('Got status update for unknown job')
             for task in self.__apimon_gear.__tasks.values():
-                if task.__gearman_job.handle == handle:
+                if task._gearman_job.handle == handle:
                     self.__apimon_gear.onUnknownJob(job)
 
 
 class JobExecutorClient(object):
+    """It is responsible for scheduling tasks for execution and send Gear jobs
+    for those
+    """
     log = logging.getLogger('apimon.JobExecutorClient')
 
     def __init__(self, config, scheduler):
@@ -169,15 +174,13 @@ class JobExecutorClient(object):
                                    keepalive=True, tcp_keepidle=60,
                                    tcp_keepintvl=30, tcp_keepcnt=5)
 
-        self._task_queue = queue.Queue()
-        self._rescheduler_thread = TaskRescheduler(self, self._task_queue)
-        self._rescheduler_thread.start()
+        self._matrix = Matrix()
+
+        self._scheduler_thread = ScheduleWatcher(self, self._matrix)
+        self._scheduler_thread.start()
         self._cleanup_thread = GearmanCleanup(self)
         self._cleanup_thread.start()
         self.stopped = False
-        self._reschedule = True
-
-        self._matrix = Matrix()
 
     def start(self) -> None:
         self.log.debug('Starting scheduling of jobs')
@@ -186,64 +189,58 @@ class JobExecutorClient(object):
         self.log.debug('Stopping')
         self.stopped = True
         self._reschedule = False
-        self._rescheduler_thread.stop()
+        self._scheduler_thread.stop()
         self._cleanup_thread.stop()
-        self._rescheduler_thread.join()
+        self._scheduler_thread.join()
         self._cleanup_thread.join()
         self.log.debug('Stopped')
 
-    def _submit_task(self, task, **kwargs) -> None:
-        if task.id:
-            self.__tasks[task.id] = task
-            self._matrix.send_neo(task.project.name, task.task,
-                                  task.env.name, task.id)
+    def _submit_gear_task(self, task, **kwargs) -> None:
+        task.prepare_gear_job(self.config,
+                              self.scheduler._config_version)
+        if task._gear_job_id:
+            self.__tasks[task._gear_job_id] = task
 
-        if task.__gearman_job:
+        if task._gearman_job:
             while not self.stopped:
                 try:
-                    self.gearman.submitJob(task.__gearman_job, timeout=30,
+                    self.gearman.submitJob(task._gearman_job, timeout=30,
                                            **kwargs)
+                    task.scheduled_at = datetime.datetime.now()
+                    task.next_run_at = task.scheduled_at + task.interval_dt
                     self.scheduler.task_scheduled(task)
                     return
                 except Exception:
                     self.log.debug('Exception submitting job')
                     time.sleep(2)
 
-    def _schedule_task(self, project, task,
-                       env, wake_rescheduler=True) -> None:
-        new_task = self._prepare_task(project, task, env)
-        if new_task:
-            self.__put_task_to_queue(new_task, wake_rescheduler)
-
-    def __put_task_to_queue(self, task, wake_rescheduler=True) -> None:
-        self._task_queue.put(task)
-        if wake_rescheduler:
-            self._rescheduler_thread.wake_event.set()
-
     def onTaskCompleted(self, job, result=None) -> JobTask:
         self.log.debug('Task %s completed with %s' % (job, result))
         task = self.__tasks.get(job.unique)
         data = getJobData(job)
         if task:
-            log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
+            log = logutils.get_annotated_logger(self.log, task._gear_job_id,
+                                                task._apimon_job_id)
             log.debug('Task returned %s back' % data)
             self.scheduler.task_completed(task)
-            del self.__tasks[task.id]
 
-            if not self.stopped and self._reschedule:
-                # otherwise we might want to clean waiting queue, but it is
-                # processed immediately, so no chance to get something there
-                self._schedule_task(task.project, task.task, task.env)
+            self.__tasks.pop(task._gear_job_id)
+            task.reset_job()
+
         else:
             self.log.debug('No data for job found')
+
             try:
                 if data:
+                    # Try to recover using job data
                     project = data.get('project', {})
                     env = data.get('env', {})
                     if project is not None and env is not None:
-                        self._scheduler_task(
-                            self.scheduler._projects.get(project['name']),
+                        task = self._matrix.find_neo(
                             project['name'], project['task'], env['name'])
+
+                        if task:
+                            task.reset_job()
             except Exception:
                 self.log.exception('Exception during recovering lost job')
         return task
@@ -258,69 +255,34 @@ class JobExecutorClient(object):
                 task.started = True
                 self.scheduler.task_started(task)
 
-    def _prepare_task(self, project, task, env) -> JobTask:
-        self.log.debug('Preparing gearman Job %s:%s:%s', project, task, env)
-        if not project.is_task_valid(task):
-            return None
-
-        task = JobTask(uuid.uuid4().hex,
-                       project, task, env)
-        task.job_id = uuid.uuid4().hex
-
-        gearman_job = gear.TextJob(
-            'apimon:ansible',
-            json.dumps(task.get_job_data(self.config,
-                                         self.scheduler._config_version)),
-            unique=task.id
-        )
-
-        task.__gearman_job = gearman_job
-        task.__gearman_worker = None
-
-        return task
-
-    def pause_rescheduling(self) -> None:
+    def pause_scheduling(self) -> None:
         self.log.debug('Pausing Job scheduling')
-        self._reschedule = False
+        # Disable scheduling
+        self._scheduler_thread.pause()
+        # Cancel jobs that we can
         self._cancel_tasks()
 
-    def resume_rescheduling(self) -> None:
+    def resume_scheduling(self) -> None:
         self.log.debug('Resume Job scheduling')
-        if self._reschedule:
-            self.log.debug('Rescheduling was not enabled. Not doing anything')
-            return
-        self._reschedule = True
-        self._schedule_all()
+        # Unpause the scheduler thread
+        self._scheduler_thread.unpause()
+        self._render_matrix()
 
     def _cancel_tasks(self) -> None:
         for task in list(self.__tasks.values()):
             self.log.debug('Cancelling task %s' % task)
             if not task.started:
                 # The task hasn't started yet
-                self.cancelJobInQueue(task)
+                self.cancel_job(task)
             else:
                 self.log.info('Not cancelling job %s since it is running' %
                               task.id)
                 self.__tasks.pop(task.id, None)
-                self._matrix.send_neo(task.project.name, task.task,
-                                      task.env.name, '')
-
-    def _schedule_all(self) -> None:
-        self._render_matrix()
-        self.log.debug('World Matrix looks like %s' % self._matrix)
-
-        for (project, task, env) in self._matrix.find_glitches():
-            self.log.debug('glitch at %s %s %s', project, task, env)
-            self._schedule_task(
-                self.scheduler._projects.get(project),
-                task,
-                self.scheduler._environments.get(env),
-                False)
-        self._rescheduler_thread.wake_event.set()
 
     def _render_matrix(self) -> None:
         """Prepare matrix of projects/tasks/environments
         """
+        # TODO(gtema): reset the matrix
         matrix = self.config.get_section('test_matrix') or []
         for item in matrix:
             project = self.scheduler._projects.get(item['project'])
@@ -333,33 +295,49 @@ class JobExecutorClient(object):
                                  'known', item['env'])
             if 'tasks' not in item:
                 for task in project.tasks():
-                    self._matrix.send_neo(project.name, task, env.name)
+                    task_instance = JobTask(project, task, env)
+                    self._matrix.send_neo(
+                        project.name, task, env.name,
+                        task_instance)
             else:
                 for task in item.get('tasks', []):
-                    self._matrix.send_neo(project.name, task, env.name)
+                    interval = 0
+                    if isinstance(task, dict):
+                        task_name = list(task.keys())[0]
+                        interval = int(task[task_name].get('interval', 0))
+                        task = task_name
+
+                    task_instance = JobTask(
+                        project,
+                        os.path.join(project.tests_location, task),
+                        env, interval=interval)
+
+                    self._matrix.send_neo(
+                        project.name, task, env.name, task_instance)
 
     def onDisconnect(self, job) -> None:
         """Disconnect called for each job with the lost server"""
         # Get the job that failed and "re-schedule" it
+        # disconnect means we will never hear anything from the job
         task = self.__tasks[job.unique]
-        self.__put_task_to_queue(task, True)
+        if task:
+            task.reset_job()
 
     def onUnknownJob(self, job) -> None:
         self.onTaskCompleted(job, 'LOST')
 
-    def cancelJobInQueue(self, task) -> None:
+    def cancel_job(self, task) -> None:
+        """Try to cancel gear job"""
         log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
-        job = task.__gearman_job
+        job = task._gearman_job
 
         req = gear.CancelJobAdminRequest(job.handle)
         job.connection.sendAdminRequest(req, timeout=300)
         log.debug("Response to cancel task request: %s", req.response.strip())
         if req.response.startswith(b"OK"):
             try:
-                del self.__tasks[task.id]
-                self._matrix.send_neo(task.project.name, task.task,
-                                      task.env.name, '')
-
+                self.__tasks.pop(task._gear_job_id)
+                task.reset_job()
             except Exception:
                 pass
             return True
@@ -370,7 +348,7 @@ class JobExecutorClient(object):
         # Construct a list from the values iterator to protect from it changing
         # out from underneath us.
         for task in list(self.__tasks.values()):
-            job = task.__gearman_job
+            job = task._gearman_job
             if not job.handle:
                 # The task hasn't been enqueued yet
                 continue
@@ -379,9 +357,7 @@ class JobExecutorClient(object):
             job.connection.sendPacket(p)
 
     def _project_updated(self, project) -> None:
-        """Check whether all tasks in the project are
-        scheduled
-        """
+        """Check whether all tasks in the project are scheduled"""
         current_tasks = []
         for task in list(self.__tasks.values()):
             if task.project.name != project.name:
@@ -405,7 +381,10 @@ class JobExecutorClient(object):
                 # In in the matrix we set tasks - do not scheduler newly
                 # appeared ones
                 for task in new_tasks:
-                    self._schedule_task(
-                        project, task,
-                        self.scheduler._environments.get(item['env']),
-                    )
+                    env = self.scheduler._environments.get(item['env'])
+                    task_instance = JobTask(project, task, env)
+
+                    self._matrix.send_neo(
+                        project.name,
+                        os.path.join(project.tests_location, task),
+                        env.name, task_instance)

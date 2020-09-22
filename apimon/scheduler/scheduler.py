@@ -176,6 +176,8 @@ class ProjectCleanup(threading.Thread):
         while True:
             self.wake_event.wait(
                 self.config.get_default('scheduler', 'cleanup_interval', 1200))
+            self.wake_event.clear()
+
             if self._stopped:
                 return
 
@@ -208,7 +210,7 @@ class ProjectCleanup(threading.Thread):
         if not conn:
             self.log.error('Cannot do project cleanup since connection n/a')
             return
-        age = datetime.timedelta(hour=6)
+        age = datetime.timedelta(hours=6)
         current_time = datetime.datetime.now()
         created_at_filter = current_time - age
         filters = {'created_at': created_at_filter.isoformat()}
@@ -553,7 +555,7 @@ class Scheduler(threading.Thread):
         self.operational_event_queue.task_done()
 
     def _reconfig(self, event) -> None:
-        self.__executor_client.pause_rescheduling()
+        self.__executor_client.pause_scheduling()
         self.config = event.config
 
         if alerta_client:
@@ -567,7 +569,7 @@ class Scheduler(threading.Thread):
         self._config_version += 1
         self._load_clouds_config()
 
-        self.__executor_client.resume_rescheduling()
+        self.__executor_client.resume_scheduling()
 
     def _process_scheduled_task(self, event) -> None:
         pass
@@ -579,10 +581,10 @@ class Scheduler(threading.Thread):
         pass
 
     def _pause_scheduling(self, event) -> None:
-        self.__executor_client.pause_rescheduling()
+        self.__executor_client.pause_scheduling()
 
     def _resume_scheduling(self, event) -> None:
-        self.__executor_client.resume_rescheduling()
+        self.__executor_client.resume_scheduling()
 
     def _git_updated(self, project) -> None:
         """We got new git revision of project"""

@@ -5,6 +5,10 @@ gear:
 log:
   config: etc/logging.conf
 alerta:
+epmon:
+  clouds:
+    - prod
+    - preprod
 scheduler:
   socket: /tmp/scheduler.socket
   refresh_interval: 10
@@ -54,13 +58,14 @@ test_projects:
     repo_url: https://github.com/opentelekomcloud-infra/apimon-tests
     repo_ref: master
     scenarios_location: playbooks
-    environments:
-      - prod
+    # environments:
+    #  - prod
   - name: quality
     repo_url: https://github.com/opentelekomcloud-infra/test-scenarios
     repo_ref: master
     scenarios_location: tests/quality
     type: misc
+    exec_cmd: "python %s"
 test_matrix:
   - env: prod
     project: apimon
@@ -70,7 +75,8 @@ test_matrix:
   - env: prod
     project: quality
     tasks:
-      - sc_quality
+      - sc_quality:
+          interval: 60  # minutes
 metrics:
   influxdb:
      host: localhost
