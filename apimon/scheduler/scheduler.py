@@ -145,7 +145,7 @@ class GitRefresh(threading.Thread):
 
 class ProjectCleanup(threading.Thread):
     """A thread taking care of periodical project cleanup"""
-    log = logging.getLogger('apimon.GitRefresh')
+    log = logging.getLogger('apimon.ProjectCleanup')
 
     def __init__(self, config):
         threading.Thread.__init__(self)
@@ -213,11 +213,11 @@ class ProjectCleanup(threading.Thread):
         age = datetime.timedelta(hours=6)
         current_time = datetime.datetime.now()
         created_at_filter = current_time - age
-        filters = {'created_at': created_at_filter.isoformat()}
+        _filters = {'created_at': created_at_filter.isoformat()}
         try:
             conn.project_cleanup(
                 wait_timeout=600,
-                filters=filters
+                filters=_filters
             )
         except Exception:
             self.log.exception('Exception during project cleanup')
