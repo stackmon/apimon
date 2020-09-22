@@ -58,8 +58,6 @@ test_projects:
     repo_url: https://github.com/opentelekomcloud-infra/apimon-tests
     repo_ref: master
     scenarios_location: playbooks
-    # environments:
-    #  - prod
   - name: quality
     repo_url: https://github.com/opentelekomcloud-infra/test-scenarios
     repo_ref: master
