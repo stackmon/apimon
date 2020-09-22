@@ -323,7 +323,7 @@ class MiscJob:
             if self.log.isEnabledFor(logging.DEBUG):
                 with open(job_log_file, 'r') as log_fd:
                     # Show the job output into our log
-                    for line in process.stdout:
+                    for line in log_fd:
                         self.log.debug('%s', line.decode('utf-8'))
 
         else:

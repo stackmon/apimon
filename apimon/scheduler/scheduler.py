@@ -215,6 +215,7 @@ class ProjectCleanup(threading.Thread):
         created_at_filter = current_time - age
         _filters = {'created_at': created_at_filter.isoformat()}
         try:
+            self.log.debug('Performing project cleanup in %s' % target_cloud)
             conn.project_cleanup(
                 wait_timeout=600,
                 filters=_filters
