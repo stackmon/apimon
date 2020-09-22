@@ -31,10 +31,8 @@
     check:
       jobs:
         - tox-pep8
+        - tox-py38
         - apimon-build-image
-    check-post:
-      jobs:
-        - apimon-upload-image
     gate:
       jobs:
         - tox-pep8

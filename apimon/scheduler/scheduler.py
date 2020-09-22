@@ -11,6 +11,7 @@
 # under the License.
 #
 
+import datetime
 import logging
 import threading
 import sys
@@ -18,6 +19,7 @@ import json
 import queue
 
 import influxdb
+import openstack
 
 try:
     from alertaclient.api import Client as alerta_client
@@ -141,6 +143,86 @@ class GitRefresh(threading.Thread):
                                            'repo')
 
 
+class ProjectCleanup(threading.Thread):
+    """A thread taking care of periodical project cleanup"""
+    log = logging.getLogger('apimon.GitRefresh')
+
+    def __init__(self, config):
+        threading.Thread.__init__(self)
+        self.config = config
+
+        self.wake_event = threading.Event()
+        self._stopped = False
+
+        self._clouds = []
+
+    def stop(self):
+        self.log.debug('Stopping ProjectCleanup thread')
+        self._stopped = True
+        self.wake_event.set()
+
+    def run(self):
+        # Determine clouds to cleanup by looking into epmon clouds
+        for cl in self.config.get_default('epmon', 'clouds', []):
+            if isinstance(cl, dict):
+                if len(cl.items()) != 1:
+                    raise RuntimeError(
+                        'Can not parse epmon clouds configuration')
+                target_cloud = list(cl.keys())[0]
+            else:
+                target_cloud = cl
+            self._clouds.append(target_cloud)
+
+        while True:
+            self.wake_event.wait(
+                self.config.get_default('scheduler', 'cleanup_interval', 1200))
+            self.wake_event.clear()
+
+            if self._stopped:
+                return
+
+            for cloud in self._clouds:
+                self._project_cleanup(cloud)
+
+    def _get_cloud_connect(self, cloud):
+        auth_part = {}
+        for cnf in self.config.config.get('clouds', []):
+            if cnf.get('name') == cloud:
+                auth_part = cnf.get('data')
+        if not auth_part:
+            self.log.error('Cannot determine cloud configuration for the '
+                           'project cleanup of %s' % cloud)
+            return None
+        region = openstack.config.get_cloud_region(
+            load_yaml_config=False,
+            **auth_part)
+        try:
+            conn = openstack.connection.Connection(
+                config=region,
+            )
+            return conn
+        except Exception:
+            self.log.exception('Cannot establish connection to cloud %s' %
+                               cloud)
+
+    def _project_cleanup(self, target_cloud):
+        conn = self._get_cloud_connect(target_cloud)
+        if not conn:
+            self.log.error('Cannot do project cleanup since connection n/a')
+            return
+        age = datetime.timedelta(hours=6)
+        current_time = datetime.datetime.now()
+        created_at_filter = current_time - age
+        filters = {'created_at': created_at_filter.isoformat()}
+        try:
+            conn.project_cleanup(
+                wait_timeout=600,
+                filters=filters
+            )
+        except Exception:
+            self.log.exception('Exception during project cleanup')
+
+
 class Stat(threading.Thread):
     """A thread taking care of reporting statistics"""
     log = logging.getLogger('apimon.stat')
@@ -239,6 +321,7 @@ class Scheduler(threading.Thread):
 
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
+        self._project_cleanup_thread = ProjectCleanup(self.config)
         # self._stat_thread = Stat(self, self.config)
 
         self.cloud_config_gearworker = GearWorker(
@@ -331,6 +414,7 @@ class Scheduler(threading.Thread):
         self._load_environments()
 
         self._git_refresh_thread.start()
+        self._project_cleanup_thread.start()
 
         self.__executor_client.start()
         # self._stat_thread.start()
@@ -348,8 +432,10 @@ class Scheduler(threading.Thread):
         self._stopped = True
         self.__executor_client.stop()
         self._git_refresh_thread.stop()
+        self._project_cleanup_thread.stop()
         self.wake_event.set()
         self._git_refresh_thread.join()
+        self._project_cleanup_thread.join()
         # self._stat_thread.join()
         self._socket_running = False
 
@@ -469,7 +555,7 @@ class Scheduler(threading.Thread):
         self.operational_event_queue.task_done()
 
     def _reconfig(self, event) -> None:
-        self.__executor_client.pause_rescheduling()
+        self.__executor_client.pause_scheduling()
         self.config = event.config
 
         if alerta_client:
@@ -483,7 +569,7 @@ class Scheduler(threading.Thread):
         self._config_version += 1
         self._load_clouds_config()
 
-        self.__executor_client.resume_rescheduling()
+        self.__executor_client.resume_scheduling()
 
     def _process_scheduled_task(self, event) -> None:
         pass
@@ -495,10 +581,10 @@ class Scheduler(threading.Thread):
         pass
 
     def _pause_scheduling(self, event) -> None:
-        self.__executor_client.pause_rescheduling()
+        self.__executor_client.pause_scheduling()
 
     def _resume_scheduling(self, event) -> None:
-        self.__executor_client.resume_rescheduling()
+        self.__executor_client.resume_scheduling()
 
     def _git_updated(self, project) -> None:
         """We got new git revision of project"""
