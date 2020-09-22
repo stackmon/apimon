@@ -115,7 +115,6 @@ class AnsibleJob:
         self.local_project = Project(
             project.name,
             project.repo_url,
-            location=project.location,
             exec_cmd=project.exec_cmd)
 
     def execute(self):
@@ -268,7 +267,6 @@ class MiscJob:
         self.local_project = Project(
             project.name,
             project.repo_url,
-            location=project.location,
             exec_cmd=project.exec_cmd)
 
     def execute(self):
@@ -319,15 +317,14 @@ class MiscJob:
                     cwd=self.job_work_dir,
                     restore_signals=False)
 
-            # Read the output
-            for line in process.stdout:
-                self.log.debug('%s', line.decode('utf-8'))
-            stderr = process.stderr.read()
-            if stderr:
-                self.log.error('%s', stderr.decode('utf-8'))
+                # Wait for child process to finish
+                process.wait()
 
-            # Wait for child process to finish
-            process.wait()
+            if self.log.isEnabledFor(logging.DEBUG):
+                with open(job_log_file, 'r') as log_fd:
+                    # Show the job output into our log
+                    for line in process.stdout:
+                        self.log.debug('%s', line.decode('utf-8'))
 
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))

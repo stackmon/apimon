@@ -46,7 +46,6 @@ class JobTask(object):
                 'url': self.project.repo_url,
                 'ref': self.project.repo_ref,
                 'commit': str(self.project.get_commit()),
-                'location': self.project.location,
                 'task': self.task,
                 'exec_cmd': self.project.exec_cmd
             },
