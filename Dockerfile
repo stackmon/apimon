@@ -19,6 +19,9 @@ WORKDIR /usr/app
 ENV PATH=/root/.local/bin:$PATH
 RUN mkdir -p /var/{lib/apimon,log/apimon}
 
+RUN git config --global user.email "apimon@test.com"
+RUN git config --global user.name "apimon"
+
 COPY ./requirements.txt /usr/app/requirements.txt
 
 RUN git clone https://github.com/ansible/ansible --branch stable-2.10 && \
