@@ -75,7 +75,7 @@ class JobTask(object):
         self._gear_job_id = uuid.uuid4().hex
 
         gearman_job = gear.TextJob(
-            'apimon:%s' % self.project.project_type,
+            'apimon:%s' % self.project.type,
             json.dumps(self.get_job_data(job_id,
                                          config,
                                          config_version)),

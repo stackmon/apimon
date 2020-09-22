@@ -22,13 +22,13 @@ class Project(object):
     log = logging.getLogger('apimon.Project')
 
     def __init__(self, name, repo_url, repo_ref='master',
-                 project_type='ansible', location='playbooks',
+                 type='ansible', location='playbooks',
                  exec_cmd='ansible-playbook -i inventory/testing %s',
                  work_dir='wrk', **kwargs):
         self.name = name
         self.repo_url = repo_url
         self.repo_ref = repo_ref
-        self.project_type = project_type
+        self.type = type
         self.location = location
         self.exec_cmd = exec_cmd
         self.work_dir = work_dir
@@ -73,7 +73,7 @@ class Project(object):
         self.repo = self.get_git_repo()
         # Try to install requirements
         requirements_file = Path(self.project_dir, 'requirements.yml')
-        if (self.project_type.lower() == 'ansible' and
+        if (self.type.lower() == 'ansible' and
                 requirements_file.exists()):
             rc = self._ansible_galaxy_install('role', requirements_file)
             rc = self._ansible_galaxy_install('collection', requirements_file)
