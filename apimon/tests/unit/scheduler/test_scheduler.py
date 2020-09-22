@@ -59,6 +59,3 @@ class TestScheduler(TestCase):
 
     def test_basic(self):
         self.assertTrue(True)
-        #self.scheduler.start()
-
-        #self.scheduler.stop()
