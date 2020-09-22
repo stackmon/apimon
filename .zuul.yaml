@@ -31,6 +31,7 @@
     check:
       jobs:
         - tox-pep8
+        - tox-py37
         - apimon-build-image
     gate:
       jobs:
