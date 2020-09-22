@@ -356,9 +356,9 @@ class Scheduler(threading.Thread):
                 project_args['repo_ref'] = item.get('repo_ref')
             if 'type' in item:
                 project_args['type'] = item.get('type')
-            if 'scenarios_location' in item:
-                project_args['scenarios_location'] = \
-                    item.get('scenarios_location')
+            if 'location' in item:
+                project_args['location'] = \
+                    item.get('location')
             if 'exec_cmd' in item:
                 project_args['exec_cmd'] = item.get('exec_cmd')
             if 'env' in item:

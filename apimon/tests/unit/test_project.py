@@ -34,7 +34,7 @@ class TestProject(TestCase):
         self.assertEqual('fake_url', self.project.repo_url)
         self.assertEqual('master', self.project.repo_ref)
         self.assertEqual('ansible', self.project.project_type)
-        self.assertEqual('fake_loc', self.project.tests_location)
+        self.assertEqual('fake_loc', self.project.location)
         self.assertEqual('fake_cmd %s', self.project.exec_cmd)
         self.assertEqual('wrk_dir', self.project.work_dir)
 

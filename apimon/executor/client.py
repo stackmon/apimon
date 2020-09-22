@@ -309,7 +309,7 @@ class JobExecutorClient(object):
 
                     task_instance = JobTask(
                         project,
-                        os.path.join(project.tests_location, task),
+                        os.path.join(project.location, task),
                         env, interval=interval)
 
                     self._matrix.send_neo(
@@ -386,5 +386,5 @@ class JobExecutorClient(object):
 
                     self._matrix.send_neo(
                         project.name,
-                        os.path.join(project.tests_location, task),
+                        os.path.join(project.location, task),
                         env.name, task_instance)

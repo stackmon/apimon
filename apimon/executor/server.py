@@ -115,6 +115,7 @@ class AnsibleJob:
         self.local_project = Project(
             project.name,
             project.repo_url,
+            location=project.location,
             exec_cmd=project.exec_cmd)
 
     def execute(self):
@@ -267,6 +268,7 @@ class MiscJob:
         self.local_project = Project(
             project.name,
             project.repo_url,
+            location=project.location,
             exec_cmd=project.exec_cmd)
 
     def execute(self):

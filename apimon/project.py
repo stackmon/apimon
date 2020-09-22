@@ -29,7 +29,7 @@ class Project(object):
         self.repo_url = repo_url
         self.repo_ref = repo_ref
         self.project_type = project_type
-        self.tests_location = location
+        self.location = location
         self.exec_cmd = exec_cmd
         self.work_dir = work_dir
         self.project_dir = Path(self.work_dir, name)
@@ -151,7 +151,7 @@ class Project(object):
             # NOTE(gtema): disabled for now
             for scenario in self.scenarios:
                 scenario_file = Path(self.project_dir,
-                                     self.tests_location, scenario)
+                                     self.location, scenario)
                 if scenario_file.exists():
                     self._tasks.append(scenario_file.relative_to(
                         self.project_dir).as_posix())
@@ -161,7 +161,7 @@ class Project(object):
         else:
             for scenario in Path(
                     self.project_dir,
-                    self.tests_location).glob('scenario*.yaml'):
+                    self.location).glob('scenario*.yaml'):
                 self._tasks.append(
                     scenario.relative_to(self.project_dir).as_posix())
 
@@ -176,7 +176,7 @@ class Project(object):
         if not exists:
             return False
         elif hasattr(self, 'scenarios') and self.scenarios:
-            if task in [Path(self.tests_location, value).as_posix() for value
+            if task in [Path(self.location, value).as_posix() for value
                         in self.scenarios]:
                 return True
             else:
