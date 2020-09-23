@@ -91,12 +91,11 @@ class Project(object):
         git_path = Path(self.project_dir, '.git')
         if git_path.exists():
             self.repo = Repo(self.project_dir)
-            self.refresh_git_repo()
         else:
             self.log.debug('Checking out repository')
             self.repo = Repo.clone_from(self.repo_url, self.project_dir,
                                         recurse_submodules='.')
-            self.repo.remotes.origin.pull(self.repo_ref)
+        self.refresh_git_repo()
         return self.repo
 
     def refresh_git_repo(self, recurse_submodules=True):
@@ -105,7 +104,9 @@ class Project(object):
             if not self.repo:
                 self.repo = self.get_git_repo()
             self.repo.remotes.origin.update()
-            self.repo.head.reset(working_tree=True)
+            self.remote_ref = self.repo.remotes.origin.refs[self.repo_ref]
+            self.repo.head.reference = self.remote_ref
+            self.repo.head.reset(index=True, working_tree=True)
             self.repo.remotes.origin.pull(
                 self.repo_ref, recurse_submodules=recurse_submodules)
         except Exception:

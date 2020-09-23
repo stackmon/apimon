@@ -61,6 +61,7 @@ class TestJobTask(TestCase):
                         'name': 'fake_proj',
                         'ref': 'master',
                         'task': self.task,
+                        'type': 'ansible',
                         'url': 'fake_url'}},
             json.loads(job.arguments))
 
@@ -88,6 +89,7 @@ class TestJobTask(TestCase):
                         'name': 'fake_proj',
                         'ref': 'master',
                         'task': self.task,
+                        'type': 'misc',
                         'url': 'fake_url'}},
             json.loads(job.arguments))
 

@@ -51,23 +51,35 @@ class TestProject(TestCase):
             with mock.patch.object(prj, 'refresh_git_repo', return_value=True):
                 prj.get_git_repo()
 
-    def test_get_git_repo_fresh(self):
-        with mock.patch.object(Repo, 'clone_from') as git_mock:
-            repo = mock.Mock(autospec=Repo)
-            git_mock.return_value = repo
+    @mock.patch.object(Repo, 'clone_from')
+    def test_get_git_repo_fresh(self, git_mock):
+        repo = mock.Mock(autospec=Repo)
+        git_mock.return_value = repo
 
-            self.project.get_git_repo()
+        self.project.get_git_repo()
 
-            git_mock.assert_called_with('fake_url',
-                                        Path('wrk_dir', 'fake_proj'),
-                                        recurse_submodules='.')
-            repo.remotes.origin.pull.assert_called_with('master')
+        git_mock.assert_called_with('fake_url',
+                                    Path('wrk_dir', 'fake_proj'),
+                                    recurse_submodules='.')
 
     def test_refresh_git_repo(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
             self.assertIsNone(self.project.refresh_git_repo())
+            repo_mock.head.reset.assert_called_with(index=True,
+                                                    working_tree=True)
             repo_mock.remotes.origin.pull.assert_called_with(
                 'master',
+                recurse_submodules=True)
+
+    def test_refresh_git_repo_branch(self):
+        self.project.repo_ref = 'branch'
+        with mock.patch.object(self.project, 'repo') as repo_mock:
+            self.assertIsNone(self.project.refresh_git_repo())
+            repo_mock.remotes.origin.update.assert_called()
+            repo_mock.head.reset.assert_called_with(index=True,
+                                                    working_tree=True)
+            repo_mock.remotes.origin.pull.assert_called_with(
+                'branch',
                 recurse_submodules=True)
 
     def test_is_repo_update_necessary(self):

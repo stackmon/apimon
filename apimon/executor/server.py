@@ -532,8 +532,8 @@ class ExecutorServer:
             self._logs_cloud, self._logs_container_name
         )
 
-    def execute_ansible_job(self, job) -> None:
-        """Main entry function for ansible job requests"""
+    def execute_job_preparations(self, job) -> None:
+        """Basic part of the job"""
         args = json.loads(job.arguments)
         job_id = args.get('job_id')
 
@@ -554,24 +554,40 @@ class ExecutorServer:
 
         project = self._projects.get(project_args.get('name'))
 
+        name = project_args.get('name')
+        type = project_args.get('type')
+        repo_url = project_args.get('url')
+        repo_ref = project_args.get('ref')
+        exec_cmd = project_args.get('exec_cmd')
+        work_dir = self.config.get_default('executor', 'work_dir')
+        commit = project_args.get('commit')
         if not project:
             project = Project(
-                name=project_args.get('name'),
-                repo_url=project_args.get('url'),
-                repo_ref=project_args.get('ref'),
-                exec_cmd=project_args.get('exec_cmd'),
-                work_dir=self.config.get_default(
-                    'executor', 'work_dir'),
-                commit=project_args.get('commit')
+                name=name,
+                type=type,
+                repo_url=repo_url,
+                repo_ref=repo_ref,
+                exec_cmd=exec_cmd,
+                work_dir=work_dir,
+                commit=commit
             )
             project.get_git_repo()
             project.prepare()
             self._projects[project.name] = project
-        if str(project.get_commit()) != \
-                project_args.get('commit'):
+        if (
+            str(project.get_commit()) != commit
+            or project.repo_ref != repo_ref
+            or project.exec_cmd != exec_cmd
+        ):
             self.log.debug('current commit is %s' % project.get_commit())
+            project.repo_ref = repo_ref
+            project.exec_cmd = exec_cmd
             project.refresh_git_repo()
             project.prepare()
+
+    def execute_ansible_job(self, job) -> None:
+        """Main entry function for ansible job requests"""
+        self.execute_job_preparations(job)
 
         self.job_workers[job.unique] = AnsibleJob(self, job)
         self.manage_load()
@@ -581,44 +597,7 @@ class ExecutorServer:
 
     def execute_misc_job(self, job) -> None:
         """Main entry function for misc job requests"""
-        args = json.loads(job.arguments)
-        job_id = args.get('job_id')
-
-        log = get_annotated_logger(self.log, job.unique, job_id)
-
-        log.debug('Got %s job: %s', job.name, job.unique)
-
-        config_version = args.get('config_version')
-        if config_version != self._config_version:
-            log.debug('Requesting clouds config')
-            self._get_clouds_config(config_version)
-            self._flush_clouds_config()
-
-        project_args = args.get('project')
-
-        if not project_args:
-            raise RuntimeError('Job not supported')
-
-        project = self._projects.get(project_args.get('name'))
-
-        if not project:
-            project = Project(
-                name=project_args.get('name'),
-                repo_url=project_args.get('url'),
-                repo_ref=project_args.get('ref'),
-                exec_cmd=project_args.get('exec_cmd'),
-                work_dir=self.config.get_default(
-                    'executor', 'work_dir'),
-                commit=project_args.get('commit')
-            )
-            project.get_git_repo()
-            project.prepare()
-            self._projects[project.name] = project
-        if str(project.get_commit()) != \
-                project_args.get('commit'):
-            self.log.debug('current commit is %s' % project.get_commit())
-            project.refresh_git_repo()
-            project.prepare()
+        self.execute_job_preparations(job)
 
         self.job_workers[job.unique] = MiscJob(self, job)
         self.manage_load()

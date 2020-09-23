@@ -283,6 +283,7 @@ class JobExecutorClient(object):
         """Prepare matrix of projects/tasks/environments
         """
         # TODO(gtema): reset the matrix
+        self._matrix.clear()
         matrix = self.config.get_section('test_matrix') or []
         for item in matrix:
             project = self.scheduler._projects.get(item['project'])

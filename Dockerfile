@@ -29,9 +29,9 @@ COPY ./requirements.txt /usr/app/requirements.txt
 
 #RUN cd ansible && python3 setup.py install --user
 
-ADD . /usr/app/apimon
-
 RUN pip3 install --user -r /usr/app/requirements.txt
+
+ADD . /usr/app/apimon
 
 # RUN cd openstacksdk \
 #     && git fetch https://review.opendev.org/openstack/openstacksdk \

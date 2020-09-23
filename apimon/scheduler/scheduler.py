@@ -142,6 +142,8 @@ class GitRefresh(threading.Thread):
         while True:
             self.wake_event.wait(
                 self.config.get_default('scheduler', 'refresh_interval', 10))
+            self.wake_event.clear()
+
             if self._stopped:
                 return
 
@@ -149,6 +151,9 @@ class GitRefresh(threading.Thread):
                 continue
 
             for name, project in self.projects.items():
+                if self._paused:
+                    continue
+
                 if project.is_repo_update_necessary():
                     try:
                         project.refresh_git_repo()
@@ -589,8 +594,12 @@ class Scheduler(threading.Thread):
 
     def _reconfig(self, event) -> None:
         self.__executor_client.pause_scheduling()
-        self._git_refresh_thread.pause()
-        self._project_cleanup_thread.pause()
+
+        self._git_refresh_thread.stop()
+        self._project_cleanup_thread.stop()
+        self._git_refresh_thread.join()
+        self._project_cleanup_thread.join()
+
         self.config = event.config
 
         if alerta_client:
@@ -606,8 +615,12 @@ class Scheduler(threading.Thread):
         self._load_projects()
         self._load_environments()
 
-        self._git_refresh_thread.unpause()
-        self._project_cleanup_thread.unpause()
+        self._git_refresh_thread = GitRefresh(self, self._projects,
+                                              self.config)
+        self._project_cleanup_thread = ProjectCleanup(self.config)
+        self._git_refresh_thread.start()
+        self._project_cleanup_thread.start()
+
         self.__executor_client.resume_scheduling()
 
     def _process_scheduled_task(self, event) -> None:
