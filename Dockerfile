@@ -24,10 +24,10 @@ RUN git config --global user.name "apimon"
 
 COPY ./requirements.txt /usr/app/requirements.txt
 
-RUN git clone https://github.com/ansible/ansible --branch stable-2.10 && \
-    git clone https://review.opendev.org/openstack/openstacksdk
+#RUN git clone https://github.com/ansible/ansible --branch stable-2.10 && \
+#    git clone https://review.opendev.org/openstack/openstacksdk
 
-RUN cd ansible && python3 setup.py install --user
+#RUN cd ansible && python3 setup.py install --user
 
 ADD . /usr/app/apimon
 
