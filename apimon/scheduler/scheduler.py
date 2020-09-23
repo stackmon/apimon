@@ -346,6 +346,7 @@ class Scheduler(threading.Thread):
     def _load_projects(self) -> None:
         """Load projects from config and initialize them
         """
+        self._projects.clear()
         for item in self.config.get_section('test_projects'):
             project_args = {
                 'name': item.get('name'),
@@ -373,6 +374,7 @@ class Scheduler(threading.Thread):
 
     def _load_environments(self) -> None:
         """Load test environments"""
+        self._environments.clear()
         for item in self.config.get_section('test_environments'):
             env = TestEnvironment(
                 config=self.config,
@@ -383,6 +385,7 @@ class Scheduler(threading.Thread):
 
     def _load_clouds(self) -> None:
         """Load cloud connections"""
+        self._clouds.clear()
         for item in self.config.get_section('clouds'):
             cl = Cloud(
                 name=item.get('name'),
@@ -557,6 +560,8 @@ class Scheduler(threading.Thread):
 
     def _reconfig(self, event) -> None:
         self.__executor_client.pause_scheduling()
+        self._git_refresh_thread.stop()
+        self._project_cleanup_thread.stop()
         self.config = event.config
 
         if alerta_client:
@@ -569,7 +574,11 @@ class Scheduler(threading.Thread):
 
         self._config_version += 1
         self._load_clouds_config()
+        self._load_projects()
+        self._load_environments()
 
+        self._git_refresh_thread.run()
+        self._project_cleanup_thread.run()
         self.__executor_client.resume_scheduling()
 
     def _process_scheduled_task(self, event) -> None:
