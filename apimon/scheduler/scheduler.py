@@ -120,10 +120,21 @@ class GitRefresh(threading.Thread):
 
         self.wake_event = threading.Event()
         self._stopped = False
+        self._paused = False
 
     def stop(self):
         self.log.debug('Stopping Git thread')
         self._stopped = True
+        self.wake_event.set()
+
+    def pause(self):
+        self.log.debug('Pausing Git thread')
+        self._paused = True
+        self.wake_event.set()
+
+    def unpause(self):
+        self.log.debug('Unpausing Git thread')
+        self._paused = False
         self.wake_event.set()
 
     def run(self):
@@ -133,6 +144,10 @@ class GitRefresh(threading.Thread):
                 self.config.get_default('scheduler', 'refresh_interval', 10))
             if self._stopped:
                 return
+
+            if self._paused:
+                continue
+
             for name, project in self.projects.items():
                 if project.is_repo_update_necessary():
                     try:
@@ -153,12 +168,23 @@ class ProjectCleanup(threading.Thread):
 
         self.wake_event = threading.Event()
         self._stopped = False
+        self._paused = False
 
         self._clouds = []
 
     def stop(self):
         self.log.debug('Stopping ProjectCleanup thread')
         self._stopped = True
+        self.wake_event.set()
+
+    def pause(self):
+        self.log.debug('Pause ProjectCleanup thread')
+        self._paused = True
+        self.wake_event.set()
+
+    def unpause(self):
+        self.log.debug('Unpause ProjectCleanup thread')
+        self._paused = False
         self.wake_event.set()
 
     def run(self):
@@ -180,6 +206,9 @@ class ProjectCleanup(threading.Thread):
 
             if self._stopped:
                 return
+
+            if self._paused:
+                continue
 
             for cloud in self._clouds:
                 self._project_cleanup(cloud)
@@ -560,8 +589,8 @@ class Scheduler(threading.Thread):
 
     def _reconfig(self, event) -> None:
         self.__executor_client.pause_scheduling()
-        self._git_refresh_thread.stop()
-        self._project_cleanup_thread.stop()
+        self._git_refresh_thread.pause()
+        self._project_cleanup_thread.pause()
         self.config = event.config
 
         if alerta_client:
@@ -577,8 +606,8 @@ class Scheduler(threading.Thread):
         self._load_projects()
         self._load_environments()
 
-        self._git_refresh_thread.run()
-        self._project_cleanup_thread.run()
+        self._git_refresh_thread.unpause()
+        self._project_cleanup_thread.unpause()
         self.__executor_client.resume_scheduling()
 
     def _process_scheduled_task(self, event) -> None:
