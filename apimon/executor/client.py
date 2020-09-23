@@ -276,8 +276,8 @@ class JobExecutorClient(object):
                 self.cancel_job(task)
             else:
                 self.log.info('Not cancelling job %s since it is running' %
-                              task.id)
-                self.__tasks.pop(task.id, None)
+                              task._gear_job_id)
+                self.__tasks.pop(task._gear_job_id, None)
 
     def _render_matrix(self) -> None:
         """Prepare matrix of projects/tasks/environments
@@ -328,7 +328,8 @@ class JobExecutorClient(object):
 
     def cancel_job(self, task) -> None:
         """Try to cancel gear job"""
-        log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
+        log = logutils.get_annotated_logger(self.log, task._gear_job_id,
+                                            task._apimon_job_id)
         job = task._gearman_job
 
         req = gear.CancelJobAdminRequest(job.handle)
