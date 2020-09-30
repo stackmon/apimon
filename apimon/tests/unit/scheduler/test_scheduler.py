@@ -40,7 +40,7 @@ class TestProjectCleanup(TestCase):
         time.sleep(2)
 
         conn_mock.project_cleanup.assert_called_with(
-            wait_timeout=600, filters={
+            dry_run=False, wait_timeout=600, filters={
                 'created_at': mock.ANY})
 
         pc.stop()
