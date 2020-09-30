@@ -251,6 +251,7 @@ class ProjectCleanup(threading.Thread):
         try:
             self.log.debug('Performing project cleanup in %s' % target_cloud)
             conn.project_cleanup(
+                dry_run=False,
                 wait_timeout=600,
                 filters=_filters
             )
