@@ -120,7 +120,7 @@ class TestJobExecutorClient(TestCase):
         self.scheduler._projects = {
             'ansible_project': project.Project('ansible_project', 'fake_url'),
             'misc_project': project.Project(
-                'misc_project', 'fake_url', project_type='misc',
+                'misc_project', 'fake_url', type='misc',
                 location='loc')
         }
         self.scheduler._projects['ansible_project']._tasks = ['a1']
@@ -159,6 +159,7 @@ class TestJobExecutorClient(TestCase):
             # Count jobs that we would expect
             job = call.args[0]  # job argument
             args = json.loads(job.arguments)
+            print(job)
             prj = args['project']
             if prj['name'] == 'ansible_project':
                 if prj['task'] in ['a1']:

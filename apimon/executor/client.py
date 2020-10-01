@@ -276,13 +276,14 @@ class JobExecutorClient(object):
                 self.cancel_job(task)
             else:
                 self.log.info('Not cancelling job %s since it is running' %
-                              task.id)
-                self.__tasks.pop(task.id, None)
+                              task._gear_job_id)
+                self.__tasks.pop(task._gear_job_id, None)
 
     def _render_matrix(self) -> None:
         """Prepare matrix of projects/tasks/environments
         """
         # TODO(gtema): reset the matrix
+        self._matrix.clear()
         matrix = self.config.get_section('test_matrix') or []
         for item in matrix:
             project = self.scheduler._projects.get(item['project'])
@@ -309,7 +310,7 @@ class JobExecutorClient(object):
 
                     task_instance = JobTask(
                         project,
-                        os.path.join(project.tests_location, task),
+                        os.path.join(project.location, task),
                         env, interval=interval)
 
                     self._matrix.send_neo(
@@ -328,7 +329,8 @@ class JobExecutorClient(object):
 
     def cancel_job(self, task) -> None:
         """Try to cancel gear job"""
-        log = logutils.get_annotated_logger(self.log, task.id, task.job_id)
+        log = logutils.get_annotated_logger(self.log, task._gear_job_id,
+                                            task._apimon_job_id)
         job = task._gearman_job
 
         req = gear.CancelJobAdminRequest(job.handle)
@@ -386,5 +388,5 @@ class JobExecutorClient(object):
 
                     self._matrix.send_neo(
                         project.name,
-                        os.path.join(project.tests_location, task),
+                        os.path.join(project.location, task),
                         env.name, task_instance)

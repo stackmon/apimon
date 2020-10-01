@@ -43,6 +43,7 @@ class JobTask(object):
         data = {
             'project': {
                 'name': self.project.name,
+                'type': self.project.type,
                 'url': self.project.repo_url,
                 'ref': self.project.repo_ref,
                 'commit': str(self.project.get_commit()),
@@ -75,7 +76,7 @@ class JobTask(object):
         self._gear_job_id = uuid.uuid4().hex
 
         gearman_job = gear.TextJob(
-            'apimon:%s' % self.project.project_type,
+            'apimon:%s' % self.project.type,
             json.dumps(self.get_job_data(job_id,
                                          config,
                                          config_version)),
@@ -126,6 +127,9 @@ class Matrix(object):
 
     def __repr__(self):
         return str(self._matrix)
+
+    def clear(self):
+        self._matrix.clear()
 
     def find_neo(self, project, task, env):
         """Find Neo in the matrix at given location"""

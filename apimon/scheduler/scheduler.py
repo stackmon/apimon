@@ -120,10 +120,21 @@ class GitRefresh(threading.Thread):
 
         self.wake_event = threading.Event()
         self._stopped = False
+        self._paused = False
 
     def stop(self):
         self.log.debug('Stopping Git thread')
         self._stopped = True
+        self.wake_event.set()
+
+    def pause(self):
+        self.log.debug('Pausing Git thread')
+        self._paused = True
+        self.wake_event.set()
+
+    def unpause(self):
+        self.log.debug('Unpausing Git thread')
+        self._paused = False
         self.wake_event.set()
 
     def run(self):
@@ -131,9 +142,18 @@ class GitRefresh(threading.Thread):
         while True:
             self.wake_event.wait(
                 self.config.get_default('scheduler', 'refresh_interval', 10))
+            self.wake_event.clear()
+
             if self._stopped:
                 return
+
+            if self._paused:
+                continue
+
             for name, project in self.projects.items():
+                if self._paused:
+                    continue
+
                 if project.is_repo_update_necessary():
                     try:
                         project.refresh_git_repo()
@@ -145,7 +165,7 @@ class GitRefresh(threading.Thread):
 
 class ProjectCleanup(threading.Thread):
     """A thread taking care of periodical project cleanup"""
-    log = logging.getLogger('apimon.GitRefresh')
+    log = logging.getLogger('apimon.ProjectCleanup')
 
     def __init__(self, config):
         threading.Thread.__init__(self)
@@ -153,12 +173,23 @@ class ProjectCleanup(threading.Thread):
 
         self.wake_event = threading.Event()
         self._stopped = False
+        self._paused = False
 
         self._clouds = []
 
     def stop(self):
         self.log.debug('Stopping ProjectCleanup thread')
         self._stopped = True
+        self.wake_event.set()
+
+    def pause(self):
+        self.log.debug('Pause ProjectCleanup thread')
+        self._paused = True
+        self.wake_event.set()
+
+    def unpause(self):
+        self.log.debug('Unpause ProjectCleanup thread')
+        self._paused = False
         self.wake_event.set()
 
     def run(self):
@@ -180,6 +211,9 @@ class ProjectCleanup(threading.Thread):
 
             if self._stopped:
                 return
+
+            if self._paused:
+                continue
 
             for cloud in self._clouds:
                 self._project_cleanup(cloud)
@@ -213,11 +247,13 @@ class ProjectCleanup(threading.Thread):
         age = datetime.timedelta(hours=6)
         current_time = datetime.datetime.now()
         created_at_filter = current_time - age
-        filters = {'created_at': created_at_filter.isoformat()}
+        _filters = {'created_at': created_at_filter.isoformat()}
         try:
+            self.log.debug('Performing project cleanup in %s' % target_cloud)
             conn.project_cleanup(
+                dry_run=False,
                 wait_timeout=600,
-                filters=filters
+                filters=_filters
             )
         except Exception:
             self.log.exception('Exception during project cleanup')
@@ -345,6 +381,7 @@ class Scheduler(threading.Thread):
     def _load_projects(self) -> None:
         """Load projects from config and initialize them
         """
+        self._projects.clear()
         for item in self.config.get_section('test_projects'):
             project_args = {
                 'name': item.get('name'),
@@ -356,9 +393,9 @@ class Scheduler(threading.Thread):
                 project_args['repo_ref'] = item.get('repo_ref')
             if 'type' in item:
                 project_args['type'] = item.get('type')
-            if 'scenarios_location' in item:
-                project_args['scenarios_location'] = \
-                    item.get('scenarios_location')
+            if 'location' in item:
+                project_args['location'] = \
+                    item.get('location')
             if 'exec_cmd' in item:
                 project_args['exec_cmd'] = item.get('exec_cmd')
             if 'env' in item:
@@ -372,6 +409,7 @@ class Scheduler(threading.Thread):
 
     def _load_environments(self) -> None:
         """Load test environments"""
+        self._environments.clear()
         for item in self.config.get_section('test_environments'):
             env = TestEnvironment(
                 config=self.config,
@@ -382,6 +420,7 @@ class Scheduler(threading.Thread):
 
     def _load_clouds(self) -> None:
         """Load cloud connections"""
+        self._clouds.clear()
         for item in self.config.get_section('clouds'):
             cl = Cloud(
                 name=item.get('name'),
@@ -556,6 +595,12 @@ class Scheduler(threading.Thread):
 
     def _reconfig(self, event) -> None:
         self.__executor_client.pause_scheduling()
+
+        self._git_refresh_thread.stop()
+        self._project_cleanup_thread.stop()
+        self._git_refresh_thread.join()
+        self._project_cleanup_thread.join()
+
         self.config = event.config
 
         if alerta_client:
@@ -568,6 +613,14 @@ class Scheduler(threading.Thread):
 
         self._config_version += 1
         self._load_clouds_config()
+        self._load_projects()
+        self._load_environments()
+
+        self._git_refresh_thread = GitRefresh(self, self._projects,
+                                              self.config)
+        self._project_cleanup_thread = ProjectCleanup(self.config)
+        self._git_refresh_thread.start()
+        self._project_cleanup_thread.start()
 
         self.__executor_client.resume_scheduling()
 

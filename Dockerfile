@@ -19,22 +19,25 @@ WORKDIR /usr/app
 ENV PATH=/root/.local/bin:$PATH
 RUN mkdir -p /var/{lib/apimon,log/apimon}
 
+RUN git config --global user.email "apimon@test.com"
+RUN git config --global user.name "apimon"
+
 COPY ./requirements.txt /usr/app/requirements.txt
 
-RUN git clone https://github.com/ansible/ansible --branch stable-2.9 && \
-    git clone https://review.opendev.org/openstack/openstacksdk
+#RUN git clone https://github.com/ansible/ansible --branch stable-2.10 && \
+#    git clone https://review.opendev.org/openstack/openstacksdk
 
-RUN cd ansible && python3 setup.py install --user
-
-ADD . /usr/app/apimon
+#RUN cd ansible && python3 setup.py install --user
 
 RUN pip3 install --user -r /usr/app/requirements.txt
 
-RUN cd openstacksdk \
-    && git fetch https://review.opendev.org/openstack/openstacksdk \
-    refs/changes/97/727097/7 \
-    && git checkout FETCH_HEAD \
-    && python3 setup.py install --user
+ADD . /usr/app/apimon
+
+# RUN cd openstacksdk \
+#     && git fetch https://review.opendev.org/openstack/openstacksdk \
+#     refs/changes/97/727097/7 \
+#     && git checkout FETCH_HEAD \
+#     && python3 setup.py install --user
 
 RUN cd apimon && python3 setup.py install --user
 
