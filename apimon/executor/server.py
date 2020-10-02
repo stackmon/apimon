@@ -309,7 +309,7 @@ class ExecutorServer:
                                                 socket.getfqdn())
         self.name = '%s:%s' % (self.hostname, os.getpid())
 
-        self.governor_lock = threading.Lock()
+        self.governor_lock = threading.RLock()
         self.run_lock = threading.Lock()
 
         self.command_map = dict(
@@ -606,8 +606,11 @@ class ExecutorServer:
         time.sleep(1)
 
     def manage_load(self) -> None:
-        with self.governor_lock:
+        self.governor_lock.acquire(timeout=5)
+        try:
             return self._manage_load()
+        finally:
+            self.governor_lock.release()
 
     def _manage_load(self) -> None:
         if self.accepting_work:
