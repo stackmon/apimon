@@ -614,13 +614,10 @@ class ExecutorServer:
             return self._manage_load()
 
     def _manage_load(self) -> None:
-        self.log.debug('Evaluating load')
         if self.accepting_work:
-            self.log.debug('Still in accepting job')
             # Don't unregister if we don't have any active jobs.
             for sensor in self.sensors:
                 ok, message = sensor.isOk()
-                self.log.debug('Sensor %s returned %s', sensor, message)
                 if not ok:
                     self.log.info(
                         "Unregistering due to {}".format(message))
@@ -629,12 +626,10 @@ class ExecutorServer:
                     # self.unregister_work()
                     break
         else:
-            self.log.debug('Currently not accepting jobs')
             reregister = True
             limits = []
             for sensor in self.sensors:
                 ok, message = sensor.isOk()
-                self.log.debug('Sensor %s returned %s', sensor, message)
                 limits.append(message)
                 if not ok:
                     reregister = False
