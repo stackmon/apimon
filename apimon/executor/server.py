@@ -382,6 +382,8 @@ class ExecutorServer:
                     endpoint=alerta_ep,
                     key=alerta_token)
 
+        self.accepting_work = True
+
         self.executor_worker.start()
 
         self.governor_stop_event = threading.Event()
@@ -430,12 +432,14 @@ class ExecutorServer:
         """Pause processing"""
         self.log.debug('Pausing')
         self.pause_sensor.pause = True
+        self.accepting_work = False
         self.executor_worker.pause()
 
     def resume(self) -> None:
         """Resume processing of jobs"""
         self.log.debug('Resuming')
         self.pause_sensor.pause = False
+        self.accepting_work = True
         self.executor_worker.resume()
 
     def run_command(self) -> None:
@@ -612,9 +616,11 @@ class ExecutorServer:
     def _manage_load(self) -> None:
         self.log.debug('Evaluating load')
         if self.accepting_work:
+            self.log.debug('Still in accepting job')
             # Don't unregister if we don't have any active jobs.
             for sensor in self.sensors:
                 ok, message = sensor.isOk()
+                self.log.debug('Sensor %s returned %s', sensor, message)
                 if not ok:
                     self.log.info(
                         "Unregistering due to {}".format(message))
@@ -623,10 +629,12 @@ class ExecutorServer:
                     # self.unregister_work()
                     break
         else:
+            self.log.debug('Currently not accepting jobs')
             reregister = True
             limits = []
             for sensor in self.sensors:
                 ok, message = sensor.isOk()
+                self.log.debug('Sensor %s returned %s', sensor, message)
                 limits.append(message)
                 if not ok:
                     reregister = False
