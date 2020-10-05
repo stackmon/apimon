@@ -309,7 +309,7 @@ class ExecutorServer:
                                                 socket.getfqdn())
         self.name = '%s:%s' % (self.hostname, os.getpid())
 
-        self.governor_lock = threading.Lock()
+        self.governor_lock = threading.RLock()
         self.run_lock = threading.Lock()
 
         self.command_map = dict(
@@ -382,6 +382,8 @@ class ExecutorServer:
                     endpoint=alerta_ep,
                     key=alerta_token)
 
+        self.accepting_work = True
+
         self.executor_worker.start()
 
         self.governor_stop_event = threading.Event()
@@ -430,12 +432,14 @@ class ExecutorServer:
         """Pause processing"""
         self.log.debug('Pausing')
         self.pause_sensor.pause = True
+        self.accepting_work = False
         self.executor_worker.pause()
 
     def resume(self) -> None:
         """Resume processing of jobs"""
         self.log.debug('Resuming')
         self.pause_sensor.pause = False
+        self.accepting_work = True
         self.executor_worker.resume()
 
     def run_command(self) -> None:
@@ -617,7 +621,7 @@ class ExecutorServer:
                 if not ok:
                     self.log.info(
                         "Unregistering due to {}".format(message))
-                    self._accepting_work = False
+                    self.accepting_work = False
                     self.executor_worker.pause()
                     # self.unregister_work()
                     break
@@ -633,7 +637,7 @@ class ExecutorServer:
             if reregister:
                 self.log.info("Re-registering as job is within its limits "
                               "{}".format(", ".join(limits)))
-                self._accepting_work = True
+                self.accepting_work = True
                 self.executor_worker.resume()
                 # self.register_work()
 
@@ -645,22 +649,22 @@ class ExecutorServer:
             self.log.error('Trying to delete job data %s, which is not there' %
                            unique)
 
-    def register_work(self) -> None:
-        if self._running:
-            self.accepting_work = True
-            function_name = 'apimon:ansible'
-            self.executor_worker.gearman.registerFunction(function_name)
-            self.executor_worker.resume()
-            self.executor_worker.gearman._sendGrabJobUniq()
+    # def register_work(self) -> None:
+    #     if self._running:
+    #         self.accepting_work = True
+    #         function_name = 'apimon:ansible'
+    #         self.executor_worker.gearman.registerFunction(function_name)
+    #         self.executor_worker.resume()
+    #         self.executor_worker.gearman._sendGrabJobUniq()
 
-    def unregister_work(self) -> None:
-        self.accepting_work = False
-        function_name = 'apimon:ansible'
-        self.executor_worker.pause()
+    # def unregister_work(self) -> None:
+    #     self.accepting_work = False
+    #     function_name = 'apimon:ansible'
+    #     self.executor_worker.pause()
 
-        self.wait_for_jobs()
+    #     self.wait_for_jobs()
 
-        self.executor_worker.gearman.unRegisterFunction(function_name)
+    #     self.executor_worker.gearman.unRegisterFunction(function_name)
 
     def wait_for_jobs(self, workers=None) -> None:
         self.log.debug('Waiting for current jobs to finish')
