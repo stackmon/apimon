@@ -1,7 +1,7 @@
-ansible==2.10.0
+ansible==2.10.3
 gear
-otcextensions==0.9.0
-openstacksdk==0.49.0
+otcextensions
+openstacksdk
 GitPython
 statsd
 influxdb
