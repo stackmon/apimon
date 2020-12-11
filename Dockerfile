@@ -10,10 +10,12 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM fedora:32
+FROM fedora:33
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
-    install -y git gcc python3-devel python3-setuptools python3-pip nmap-ncat procps-ng
+    install -y git gcc nmap-ncat procps-ng \
+    python3-devel python3-setuptools python3-pip \
+    python3-psycopg2 python3-sqlalchemy
 
 WORKDIR /usr/app
 ENV PATH=/root/.local/bin:$PATH

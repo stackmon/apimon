@@ -30,15 +30,15 @@
     merge-mode: squash-merge
     check:
       jobs:
-        - tox-pep8
-        - tox-py38
+        - otc-tox-pep8
+        - otc-tox-py38
         - apimon-build-image
     check-post:
       jobs:
         - apimon-upload-image
     gate:
       jobs:
-        - tox-pep8
+        - otc-tox-pep8
         - apimon-upload-image
     promote:
       jobs:
