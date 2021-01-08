@@ -30,6 +30,12 @@ class ApimonExecutor(apimon.cmd.App):
         parser = super(ApimonExecutor, self).create_parser()
 
         parser.add_argument(
+            '--zone',
+            dest='zone',
+            help='Executor zone'
+        )
+
+        parser.add_argument(
             'command',
             nargs='?',
             choices=apimon.executor.server.COMMANDS,
@@ -73,8 +79,10 @@ class ApimonExecutor(apimon.cmd.App):
 
         self.log = logging.getLogger("apimon.executor")
 
+        self.log.info('Starting...')
+
         self.executor = apimon.executor.server.ExecutorServer(
-            self.config)
+            config=self.config, zone=self.args.zone)
         self.executor.start()
 
         signal.signal(signal.SIGHUP, self.reconfigure_handler)

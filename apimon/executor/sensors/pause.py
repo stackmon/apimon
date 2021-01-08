@@ -29,8 +29,8 @@ class PauseSensor(SensorInterface):
         else:
             return True, 'running'
 
-    def reportStats(self, statsd, base_key):
-        if self.pause:
+    def reportStats(self, statsd, base_key: str, zero: bool = False):
+        if self.pause and not zero:
             value = 1
         else:
             value = 0

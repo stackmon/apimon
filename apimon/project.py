@@ -23,7 +23,7 @@ class Project(object):
 
     def __init__(self, name, repo_url, repo_ref='master',
                  type='ansible', location='playbooks',
-                 exec_cmd='ansible-playbook -i inventory/testing %s',
+                 exec_cmd='ansible-playbook -i inventory/testing %s -v',
                  work_dir='wrk', **kwargs):
         self.name = name
         self.repo_url = repo_url
@@ -76,7 +76,11 @@ class Project(object):
         if (self.type.lower() == 'ansible' and
                 requirements_file.exists()):
             rc = self._ansible_galaxy_install('role', requirements_file)
-            rc = self._ansible_galaxy_install('collection', requirements_file)
+            if rc == 0:
+                rc = self._ansible_galaxy_install(
+                    'collection', requirements_file)
+            if rc != 0:
+                self.log.error('Error installing dependencies: RC=%s' % rc)
             return rc
         return 0
 

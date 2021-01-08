@@ -22,6 +22,7 @@ import gear
 
 from apimon.model import JobTask, Matrix
 from apimon.lib import logutils
+from apimon.lib.statsd import get_statsd
 
 
 def getJobData(job) -> dict:
@@ -182,6 +183,9 @@ class JobExecutorClient(object):
         self._cleanup_thread.start()
         self.stopped = False
 
+        statsd_extra_keys = {}
+        self.statsd = get_statsd(self.config, statsd_extra_keys)
+
     def start(self) -> None:
         self.log.debug('Starting scheduling of jobs')
 
@@ -193,6 +197,9 @@ class JobExecutorClient(object):
         self._cleanup_thread.stop()
         self._scheduler_thread.join()
         self._cleanup_thread.join()
+        if self.statsd:
+            self._matrix.report_stats(self.statsd, zero=True)
+
         self.log.debug('Stopped')
 
     def _submit_gear_task(self, task, **kwargs) -> None:
@@ -228,7 +235,7 @@ class JobExecutorClient(object):
             task.reset_job()
 
         else:
-            self.log.debug('No data for job found')
+            self.log.warn('No data for job found')
 
             try:
                 if data:
@@ -256,14 +263,16 @@ class JobExecutorClient(object):
                 self.scheduler.task_started(task)
 
     def pause_scheduling(self) -> None:
-        self.log.debug('Pausing Job scheduling')
+        self.log.info('Pausing Job scheduling')
         # Disable scheduling
         self._scheduler_thread.pause()
         # Cancel jobs that we can
         self._cancel_tasks()
+        if self.statsd:
+            self._matrix.report_stats(self.statsd, zero=True)
 
     def resume_scheduling(self) -> None:
-        self.log.debug('Resume Job scheduling')
+        self.log.info('Resume Job scheduling')
         # Unpause the scheduler thread
         self._scheduler_thread.unpause()
         self._render_matrix()
@@ -315,6 +324,9 @@ class JobExecutorClient(object):
 
                     self._matrix.send_neo(
                         project.name, task, env.name, task_instance)
+
+        if self.statsd:
+            self._matrix.report_stats(self.statsd)
 
     def onDisconnect(self, job) -> None:
         """Disconnect called for each job with the lost server"""
@@ -390,3 +402,6 @@ class JobExecutorClient(object):
                         project.name,
                         os.path.join(project.location, task),
                         env.name, task_instance)
+
+        if self.statsd:
+            self._matrix.report_stats(self.statsd)

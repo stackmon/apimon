@@ -2,13 +2,17 @@
 gear:
   - server: localhost
     port: 4730
+    start: true
 log:
   config: etc/logging.conf
 alerta:
+statsd:
+  host: localhost
 epmon:
+  socket: /tmp/epmon.socket
   clouds:
     - prod
-    - preprod
+      #  - preprod
 scheduler:
   socket: /tmp/scheduler.socket
   refresh_interval: 10
@@ -16,6 +20,7 @@ scheduler:
 executor:
   work_dir: wrk_executor
   socket: /tmp/executor.socket
+  db_url: postgresql://apimon:apimon@localhost:5432/apimon
 test_environments:
   - name: prod
     env:

@@ -141,15 +141,28 @@ class TestProject(TestCase):
                     as install_mock:
                 prj.prepare()
                 install_mock.assert_not_called()
+                install_mock.return_value = 0
 
                 # Now write file and ensure galaxy invoked
                 open(requirements_file, 'a').close()
-                prj.prepare()
+                res = prj.prepare()
                 calls = [
                     mock.call('role', requirements_file),
                     mock.call('collection', requirements_file)
                 ]
                 install_mock.assert_has_calls(calls)
+                self.assertEqual(res, 0)
+
+                install_mock.return_value = 1
+
+                # Now write file and ensure galaxy invoked
+                open(requirements_file, 'a').close()
+                res = prj.prepare()
+                calls = [
+                    mock.call('role', requirements_file),
+                ]
+                install_mock.assert_has_calls(calls)
+                self.assertEqual(res, 1)
 
     def test_tasks_all(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

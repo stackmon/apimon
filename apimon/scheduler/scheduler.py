@@ -16,9 +16,7 @@ import logging
 import threading
 import sys
 import json
-import queue
 
-import influxdb
 import openstack
 
 try:
@@ -28,6 +26,7 @@ except ImportError:
 
 from apimon.lib import queue as _queue
 from apimon.lib.gearworker import GearWorker
+from apimon.lib.statsd import get_statsd
 from apimon.project import Project
 from apimon.model import TestEnvironment, Cloud
 
@@ -156,6 +155,7 @@ class GitRefresh(threading.Thread):
 
                 if project.is_repo_update_necessary():
                     try:
+                        self.log.info('Git update identified in %s' % name)
                         project.refresh_git_repo()
                         self.scheduler._git_updated(project)
                     except Exception:
@@ -259,75 +259,14 @@ class ProjectCleanup(threading.Thread):
             self.log.exception('Exception during project cleanup')
 
 
-class Stat(threading.Thread):
-    """A thread taking care of reporting statistics"""
-    log = logging.getLogger('apimon.stat')
-
-    def __init__(self, scheduler, config):
-        threading.Thread.__init__(self)
-        self.scheduler = scheduler
-        self.config = config
-
-        self.metric_queue = queue.Queue()
-
-        self.wake_event = threading.Event()
-        self._stopped = False
-
-    def stop(self):
-        self.log.debug('Stopping stat thread')
-        self._stopped = True
-        self.wake_event.set()
-
-    def add_metrics(self, data: dict) -> None:
-        """Register metrics in the queue"""
-        self.metric_queue.put(data)
-
-    def _connect_influx(self) -> None:
-        try:
-            influx_cfg = self.config.get_section('metrics', 'influxdb')
-            if influx_cfg:
-                self.influxdb_client = influxdb.InfluxDBClient(
-                    influx_cfg.get('host', 'localhost'),
-                    influx_cfg.get('port', '8186'),
-                    influx_cfg.get('username'),
-                    influx_cfg.get('password'),
-                )
-        except Exception:
-            self.log.exception('Failed to establish connection to influxDB')
-
-    def run(self):
-        self._connect_influx()
-        while True:
-            self.wake_event.wait(
-                self.config.get_default('stat', 'interval', 5))
-            if self._stopped:
-                return
-
-            metrics = []
-
-            while True:
-                try:
-                    metric = self.metric_queue.get(False)
-                    if metric:
-                        metrics.append(metric)
-                    metric.task_done()
-                except queue.Empty:
-                    break
-
-            if metrics and self._influxdb_client:
-                self.log.debug('Metrics :%s' % metrics)
-                try:
-                    self._influxdb_client.write_points(metrics)
-                except Exception:
-                    self.log.exception('Error writing metrics to influx')
-
-
 class Scheduler(threading.Thread):
 
     log = logging.getLogger('apimon.Scheduler')
 
     def __init__(self, config):
         threading.Thread.__init__(self)
+
+        self.log.info('Starting scheduler')
         self.daemon = True
         self.wake_event = threading.Event()
         self.run_handler_lock = threading.Lock()
@@ -348,6 +287,9 @@ class Scheduler(threading.Thread):
             'scheduler', 'socket', '/var/lib/apimon/scheduler.socket')
         self._command_socket = commandsocket.CommandSocket(command_socket)
 
+        statsd_extra_keys = {}
+        self.statsd = get_statsd(self.config, statsd_extra_keys)
+
         self._alerta = None
         self._projects = {}
         self._environments = {}
@@ -358,7 +300,6 @@ class Scheduler(threading.Thread):
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
         self._project_cleanup_thread = ProjectCleanup(self.config)
-        # self._stat_thread = Stat(self, self.config)
 
         self.cloud_config_gearworker = GearWorker(
             'APImon Scheduler',
@@ -436,10 +377,10 @@ class Scheduler(threading.Thread):
             clouds[item.get('name')] = item.get('data')
         conf['clouds'] = clouds
 
-        influx_conf = self.config.get_default('metrics', 'influxdb', {})
-        if influx_conf:
+        metrics_config = self.config.get_section('metrics')
+        if metrics_config:
             conf['metrics'] = {
-                'influxdb': influx_conf
+                **metrics_config
             }
         conf['_version'] = self._config_version
         self._clouds_config = conf
@@ -456,7 +397,6 @@ class Scheduler(threading.Thread):
         self._project_cleanup_thread.start()
 
         self.__executor_client.start()
-        # self._stat_thread.start()
 
         self._socket_running = True
         self._command_socket.start()
@@ -488,7 +428,7 @@ class Scheduler(threading.Thread):
         self.log.debug("Waiting for exit")
 
     def reconfigure(self, config=None) -> None:
-        self.log.debug('Reconfiguration')
+        self.log.info('Reconfiguration')
         if not config:
             config = self.config.read()
         event = ReconfigureEvent(config)
@@ -496,17 +436,17 @@ class Scheduler(threading.Thread):
         self.wake_event.set()
         self.log.debug('Waiting for reconfiguration')
         event.wait()
-        self.log.debug('Reconfiguration complete')
+        self.log.info('Reconfiguration complete')
 
     def pause(self) -> None:
-        self.log.debug('Pausing scheduling')
+        self.log.info('Pausing scheduling')
         event = PauseSchedulingEvent()
         self.management_event_queue.put(event)
         self.wake_event.set()
         event.wait()
 
     def resume(self) -> None:
-        self.log.debug('Resume scheduling')
+        self.log.info('Resume scheduling')
         event = ResumeSchedulingEvent()
         self.management_event_queue.put(event)
         self.wake_event.set()

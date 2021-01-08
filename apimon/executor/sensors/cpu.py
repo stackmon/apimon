@@ -36,6 +36,6 @@ class CPUSensor(SensorInterface):
 
         return True, "{} <= {}".format(load_avg, self.max_load_avg)
 
-    def reportStats(self, statsd, base_key):
-        load_avg = os.getloadavg()[0]
-        statsd.gauge(base_key + '.load_average', int(load_avg * 100))
+    def reportStats(self, statsd, base_key: str, zero: bool = False):
+        load_avg = int(os.getloadavg()[0] * 100) if not zero else 0
+        statsd.gauge(base_key + '.load_average', load_avg)
