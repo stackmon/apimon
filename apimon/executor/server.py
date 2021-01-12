@@ -102,8 +102,11 @@ class BaseJob:
             'zone': self.executor_server.zone,
             'environment': self.arguments['env']['name']
         }
-        self.statsd = get_statsd(
-            self.executor_server.config, self.statsd_extra_keys)
+        try:
+            self.statsd = get_statsd(
+                self.executor_server.config, self.statsd_extra_keys)
+        except socket.gaierror:
+            pass
 
         self.socket_path = Path(
             self.job_work_dir, '.comm_socket').resolve().as_posix()
@@ -216,9 +219,6 @@ class BaseJob:
                         self.statsd.timing(name, val)
                     elif data['metric_type'] == 'g':
                         self.statsd.gauge(name, val)
-                elif isinstance(data, message.ResultTask):
-                    data['job_id'] = self.job_id
-                    self.executor_server.result_processor.add_entry(data)
                 elif isinstance(data, message.ResultTask):
                     data['job_id'] = self.job_id
                     self.executor_server.result_processor.add_entry(data)
@@ -778,7 +778,7 @@ class ExecutorServer:
 
     def execute_job_preparations(self, job) -> None:
         """Basic part of the job"""
-        self.job.sendWorkStatus(0, 100)
+        job.sendWorkStatus(0, 100)
 
         args = json.loads(job.arguments)
         job_id = args.get('job_id')
