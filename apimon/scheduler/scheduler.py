@@ -167,9 +167,10 @@ class ProjectCleanup(threading.Thread):
     """A thread taking care of periodical project cleanup"""
     log = logging.getLogger('apimon.ProjectCleanup')
 
-    def __init__(self, config):
+    def __init__(self, config, statsd):
         threading.Thread.__init__(self)
         self.config = config
+        self.statsd = statsd
 
         self.wake_event = threading.Event()
         self._stopped = False
@@ -249,6 +250,10 @@ class ProjectCleanup(threading.Thread):
         created_at_filter = current_time - age
         _filters = {'created_at': created_at_filter.isoformat()}
         try:
+            if self.statsd:
+                self.statsd.incr(
+                    'apimon.scheduler.{cloud}.{zone}.project_cleanup.run',
+                    cloud=target_cloud)
             self.log.debug('Performing project cleanup in %s' % target_cloud)
             conn.project_cleanup(
                 dry_run=False,
@@ -263,13 +268,16 @@ class Scheduler(threading.Thread):
 
     log = logging.getLogger('apimon.Scheduler')
 
-    def __init__(self, config):
+    def __init__(self, config, zone: str = None):
         threading.Thread.__init__(self)
 
         self.log.info('Starting scheduler')
         self.daemon = True
         self.wake_event = threading.Event()
         self.run_handler_lock = threading.Lock()
+
+        self.zone = zone or config.get_default(
+            'scheduler', 'zone', 'default_zone')
 
         self.command_map = {
             'pause': self.pause,
@@ -287,7 +295,9 @@ class Scheduler(threading.Thread):
             'scheduler', 'socket', '/var/lib/apimon/scheduler.socket')
         self._command_socket = commandsocket.CommandSocket(command_socket)
 
-        statsd_extra_keys = {}
+        statsd_extra_keys = {
+            'zone': self.zone,
+        }
         self.statsd = get_statsd(self.config, statsd_extra_keys)
 
         self._alerta = None
@@ -299,7 +309,7 @@ class Scheduler(threading.Thread):
 
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
-        self._project_cleanup_thread = ProjectCleanup(self.config)
+        self._project_cleanup_thread = ProjectCleanup(self.config, self.statsd)
 
         self.cloud_config_gearworker = GearWorker(
             'APImon Scheduler',
@@ -558,7 +568,7 @@ class Scheduler(threading.Thread):
 
         self._git_refresh_thread = GitRefresh(self, self._projects,
                                               self.config)
-        self._project_cleanup_thread = ProjectCleanup(self.config)
+        self._project_cleanup_thread = ProjectCleanup(self.config, self.statsd)
         self._git_refresh_thread.start()
         self._project_cleanup_thread.start()
 

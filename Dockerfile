@@ -12,12 +12,14 @@
 # limitations under the License.
 FROM fedora:33
 
-LABEL Description="APImon (OpenStack API monitoring) container"
+LABEL description="APImon (OpenStack API monitoring) container"
+LABEL maintainer="Open Telekom Cloud (ecosystem)"
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
     install -y git gcc nmap-ncat procps-ng net-tools \
     python3-devel python3-setuptools python3-pip \
-    python3-psycopg2 python3-sqlalchemy
+    python3-psycopg2 python3-sqlalchemy \
+    python3-dns && dnf clean all
 
 RUN git config --global user.email "apimon@test.com"
 RUN git config --global user.name "apimon"

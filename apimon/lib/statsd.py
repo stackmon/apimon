@@ -59,24 +59,15 @@ def get_statsd(config, extra_keys=None):
 
         def gauge(self, stat, value, rate=1, delta=False, **format_keys):
             stat = self._format_stat(stat, **format_keys)
-            try:
-                super().gauge(stat, value, rate, delta)
-            except Exception:
-                pass
+            super().gauge(stat, value, rate, delta)
 
         def incr(self, stat, count=1, rate=1, **format_keys):
             stat = self._format_stat(stat, **format_keys)
-            try:
-                super().incr(stat, count, rate)
-            except Exception:
-                pass
+            super().incr(stat, count, rate)
 
         def timing(self, stat, delta, rate=1, **format_keys):
             stat = self._format_stat(stat, **format_keys)
-            try:
-                super().timing(stat, delta, rate)
-            except Exception:
-                pass
+            super().timing(stat, delta, rate)
 
     return CustomStatsClient(
         statsd_host, statsd_port, statsd_prefix, extra_keys)

@@ -127,9 +127,10 @@ class TestJobExecutorClient(TestCase):
         self.scheduler._environments = {
             'fake_env': model.TestEnvironment(None, None, 'fake_env')
         }
+        self.scheduler.statsd = mock.Mock()
 
     def test_basic(self):
-        cl = client.JobExecutorClient(self.config, None)
+        cl = client.JobExecutorClient(self.config, self.scheduler)
         cl.start()
 
         cl.stop()

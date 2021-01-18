@@ -767,9 +767,10 @@ class ExecutorServer:
         with open(Path(clouds_loc, 'clouds.yaml'), 'w') as f:
             yaml.dump(self._clouds_config, f, default_flow_style=False)
 
-        self._logs_cloud = openstack.connect(
-            self.config.get_default('executor', 'logs_cloud', 'swift')
-        )
+        cloud = self.config.get_default('executor', 'logs_cloud', 'swift')
+        self._logs_cloud = openstack.connect(cloud=cloud)
+        self._logs_cloud.config._statsd_prefix = 'openstack.api.%s.%s' % (cloud, self.zone)
+
         self._logs_container_name = self.config.get_default(
             'executor', 'logs_cloud_container', 'job_logs')
         self._create_logs_container(

@@ -81,6 +81,8 @@ class ScheduleWatcher(threading.Thread):
         self.wake_event = threading.Event()
 
         self._tick_interval = 1  # Seconds
+        self._report_queue_size_ticks = 600
+        self._report_queue_size_cnt = 0
 
     def stop(self) -> None:
         self._stopped = True
@@ -108,6 +110,14 @@ class ScheduleWatcher(threading.Thread):
                 if not task.scheduled_at and task.next_run_at <= current_time:
                     # unless it is already "running" and time is up - start it
                     self.client._submit_gear_task(task)
+
+            if self._report_queue_size_cnt == self._report_queue_size_ticks:
+                statsd = self.client.scheduler.statsd
+                if statsd:
+                    self.matrix.report_stats(
+                        statsd)
+                self._report_queue_size_cnt = 0
+            self._report_queue_size_cnt += 1
 
 
 class ApimonGearClient(gear.Client):
@@ -183,8 +193,7 @@ class JobExecutorClient(object):
         self._cleanup_thread.start()
         self.stopped = False
 
-        statsd_extra_keys = {}
-        self.statsd = get_statsd(self.config, statsd_extra_keys)
+        self.statsd = scheduler.statsd
 
     def start(self) -> None:
         self.log.debug('Starting scheduling of jobs')

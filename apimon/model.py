@@ -174,7 +174,7 @@ class Matrix(object):
                         _stats[pname][ename] += 1
                     except KeyError:
                         _stats[pname][ename] = 1
-        base_name = 'apimon.scheduler.queue.{env}.{project}.cnt_tasks'
+        base_name = 'apimon.scheduler.queue.{project}.{env}.{zone}.cnt_tasks'
         for pname, pdata in _stats.items():
             for ename, cnt_tasks in pdata.items():
                 statsd.gauge(

@@ -34,6 +34,12 @@ class ApimonScheduler(apimon.cmd.App):
         parser = super(ApimonScheduler, self).create_parser()
 
         parser.add_argument(
+            '--zone',
+            dest='zone',
+            help='Executor zone'
+        )
+
+        parser.add_argument(
             'command',
             nargs='?',
             choices=scheduler.COMMANDS,
@@ -75,13 +81,15 @@ class ApimonScheduler(apimon.cmd.App):
             os.close(pipe_write)
             log = logging.getLogger('apimon.geard')
             import gear
+            zone = self.args.zone or self.config.get_default(
+                'scheduler', 'zone', 'default_zone')
 
             (statsd_host, statsd_port, statsd_prefix) = get_statsd_config(
                 self.config)
             if statsd_prefix:
-                statsd_prefix += '.apimon.geard'
+                statsd_prefix += '.apimon.geard.%s' % zone
             else:
-                statsd_prefix = 'apimon.geard'
+                statsd_prefix = 'apimon.geard.%s' % zone
 
             host = None
             port = None
@@ -131,7 +139,7 @@ class ApimonScheduler(apimon.cmd.App):
 
         self.log = logging.getLogger("apimon.scheduler")
 
-        self.scheduler = scheduler.Scheduler(self.config)
+        self.scheduler = scheduler.Scheduler(self.config, zone=self.args.zone)
 
         gearman = client.JobExecutorClient(self.config, self.scheduler)
 
