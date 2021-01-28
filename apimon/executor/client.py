@@ -313,8 +313,11 @@ class JobExecutorClient(object):
                 raise ValueError('Environment %s referred in matrix is not '
                                  'known', item['env'])
             if 'tasks' not in item:
+                args = {}
+                if 'interval' in item:
+                    args['interval'] = int(item['interval'])
                 for task in project.tasks():
-                    task_instance = JobTask(project, task, env)
+                    task_instance = JobTask(project, task, env, **args)
                     self._matrix.send_neo(
                         project.name, task, env.name,
                         task_instance)

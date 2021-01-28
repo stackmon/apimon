@@ -74,7 +74,7 @@ test_matrix:
     project: apimon
   - env: preprod
     project: apimon
-    test_interval: 10
+    interval: 10
   - env: prod
     project: quality
     tasks:
