@@ -245,7 +245,7 @@ class ProjectCleanup(threading.Thread):
         if not conn:
             self.log.error('Cannot do project cleanup since connection n/a')
             return
-        age = datetime.timedelta(hours=6)
+        age = datetime.timedelta(hours=2)
         current_time = datetime.datetime.now()
         created_at_filter = current_time - age
         _filters = {'created_at': created_at_filter.isoformat()}
