@@ -163,7 +163,7 @@ class EndpointMonitor(threading.Thread):
         except Exception as ex:
             self.log.exception('Cannot establish connection to cloud %s: %s' %
                                (self.target_cloud, ex))
-            self.send_alert('identity', ex)
+            self.send_alert('identity', 'ConnectionException', str(ex))
 
     def _execute(self):
         eps = self.conn.config.get_service_catalog().get_endpoints().items()
