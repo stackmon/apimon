@@ -15,6 +15,7 @@ import threading
 import time
 
 import openstack
+from keystoneauth1.exceptions import ClientException
 
 try:
     from alertaclient.api import Client as alerta_client
@@ -140,7 +141,8 @@ class EndpointMonitor(threading.Thread):
                 if self.alerta:
                     try:
                         self.alerta.heartbeat(
-                            origin='apimon.epmon.%s' % self.target_cloud,
+                            origin='apimon.epmon.%s.%s' % (
+                                self.zone, self.target_cloud),
                             tags=['apimon', 'epmon']
                         )
                     except Exception:
@@ -206,22 +208,33 @@ class EndpointMonitor(threading.Thread):
                 url,
                 headers={'content-type': 'application/json'},
                 timeout=5)
-        except Exception as e:
-            error = e
+        except (openstack.exceptions.SDKException, ClientException) as ex:
+            error = ex
             self.log.error('Got exception for endpoint %s: %s' % (url,
-                                                                  e))
+                                                                  ex))
+        except Exception:
+            self.log.exception('Got uncatched exception doing request to %s' %
+                               url)
+
         status_code = -1
         if response is not None:
             status_code = int(response.status_code)
 
         if error or status_code >= 500:
+            if endpoint != url:
+                query_url = openstack.utils.urljoin(endpoint, url)
+            else:
+                query_url = url
+            result = status_code if status_code != -1 else 'Timeout(5)'
+            value = (
+                'curl -g -i -X GET %s -H '
+                '"X-Auth-Token: ${TOKEN}" '
+                '-H "content-type: application/json" fails (%s)' % (
+                    query_url, result)
+            )
             self.send_alert(
                 resource=service,
-                value='curl -g -i -X GET %s -H '
-                      '"X-Auth-Token: ${TOKEN}" '
-                      '-H "content-type: application/json" fails' %
-                      openstack.utils.urljoin(endpoint, url) if endpoint != url
-                      else endpoint,
+                value=value,
                 raw_data=str(error.message if error else response)
             )
 
@@ -232,6 +245,8 @@ class EndpointMonitor(threading.Thread):
                 severity='critical',
                 environment=self.target_cloud,
                 service=['apimon', 'endpoint_monitor'],
+                origin='apimon.epmon.%s.%s' % (
+                    self.zone, self.target_cloud),
                 resource=resource,
                 event='Failure',
                 value=value,

@@ -222,7 +222,7 @@ class BaseJob:
                 elif isinstance(data, message.ResultTask):
                     data['job_id'] = self.job_id
                     self.executor_server.result_processor.add_entry(data)
-                    if data['result'] == 0 and self.executor_server.alerta:
+                    if data['result'] == 3 and self.executor_server.alerta:
                         try:
                             alert = self._prepare_alert_data(data)
                             self.executor_server.alerta.send_alert(**alert)
@@ -241,9 +241,9 @@ class BaseJob:
             conn.close()
 
     def _get_message_error_category(self, msg: str = None) -> str:
-        result = None
+        result = ''
         if not msg:
-            return None
+            return ''
         # SomeSDKException: 123
         # ResourceNotFound: 404
         exc = RE_EXC.search(msg)
@@ -769,7 +769,8 @@ class ExecutorServer:
 
         cloud = self.config.get_default('executor', 'logs_cloud', 'swift')
         self._logs_cloud = openstack.connect(cloud=cloud)
-        self._logs_cloud.config._statsd_prefix = 'openstack.api.%s.%s' % (cloud, self.zone)
+        self._logs_cloud.config._statsd_prefix = 'openstack.api.%s.%s' % (
+            cloud, self.zone)
 
         self._logs_container_name = self.config.get_default(
             'executor', 'logs_cloud_container', 'job_logs')

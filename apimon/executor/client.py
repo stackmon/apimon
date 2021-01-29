@@ -22,7 +22,6 @@ import gear
 
 from apimon.model import JobTask, Matrix
 from apimon.lib import logutils
-from apimon.lib.statsd import get_statsd
 
 
 def getJobData(job) -> dict:
