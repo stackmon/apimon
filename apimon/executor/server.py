@@ -719,7 +719,7 @@ class ExecutorServer:
 
     def _get_logs_link(self, job_id: str):
         if self._logs_cloud:
-            return '{ep}/{container}/{job_id}'.format(
+            return '{ep}/{container}/{job_id}/job-output.txt'.format(
                 ep=self._logs_cloud.object_store.get_endpoint(),
                 container=self._logs_container_name,
                 job_id=job_id,

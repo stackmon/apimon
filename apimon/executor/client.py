@@ -230,13 +230,13 @@ class JobExecutorClient(object):
                     time.sleep(2)
 
     def onTaskCompleted(self, job, result=None) -> JobTask:
-        self.log.debug('Task %s completed with %s' % (job, result))
+        self.log.debug('Task %s completed with %s', job, result)
         task = self.__tasks.get(job.unique)
         data = getJobData(job)
         if task:
             log = logutils.get_annotated_logger(self.log, task._gear_job_id,
                                                 task._apimon_job_id)
-            log.debug('Task returned %s back' % data)
+            log.debug('Task returned %s back', data)
             self.scheduler.task_completed(task)
 
             self.__tasks.pop(task._gear_job_id)
@@ -245,19 +245,19 @@ class JobExecutorClient(object):
         else:
             self.log.warn('No data for job found')
 
-            try:
-                if data:
-                    # Try to recover using job data
-                    project = data.get('project', {})
-                    env = data.get('env', {})
-                    if project is not None and env is not None:
-                        task = self._matrix.find_neo(
-                            project['name'], project['task'], env['name'])
+            # try:
+            #     if data:
+            #         # Try to recover using job data
+            #         project = data.get('project', {})
+            #         env = data.get('env', {})
+            #         if project is not None and env is not None:
+            #             task = self._matrix.find_neo(
+            #                 project['name'], project['task'], env['name'])
 
-                        if task:
-                            task.reset_job()
-            except Exception:
-                self.log.exception('Exception during recovering lost job')
+            #             if task:
+            #                 task.reset_job()
+            # except Exception:
+            #     self.log.exception('Exception during recovering lost job')
         return task
 
     def onWorkStatus(self, job) -> None:
@@ -328,9 +328,16 @@ class JobExecutorClient(object):
                         interval = int(task[task_name].get('interval', 0))
                         task = task_name
 
+                    task_name = os.path.join(project.location, task)
+                    if not project.is_task_valid(task_name):
+                        self.log.warn(
+                            'Skipping scheduling task %s since it '
+                            'does not exist', task)
+                        continue
+
                     task_instance = JobTask(
                         project,
-                        os.path.join(project.location, task),
+                        task_name,
                         env, interval=interval)
 
                     self._matrix.send_neo(
@@ -390,10 +397,10 @@ class JobExecutorClient(object):
                 continue
             current_tasks.append(task.task)
         # Get all tasks which are not scheduled
-        self.log.debug('Current running tasks: %s' % current_tasks)
+        self.log.debug('Current running tasks: %s', current_tasks)
         new_tasks = [value for value in project.tasks() if value not in
                      current_tasks]
-        self.log.debug('Need to schedule newly tasks: %s' % new_tasks)
+        self.log.debug('Need to schedule newly tasks: %s', new_tasks)
         if not new_tasks:
             return
 

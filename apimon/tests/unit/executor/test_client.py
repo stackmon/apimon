@@ -135,10 +135,12 @@ class TestJobExecutorClient(TestCase):
 
         cl.stop()
 
+    @mock.patch('apimon.project.Project.is_task_valid',
+                return_value=True)
     @mock.patch('apimon.project.Project.get_commit',
                 return_value='fake_commit')
     @mock.patch('apimon.executor.client.ApimonGearClient')
-    def test_1(self, gear_mock, git_mock):
+    def test_1(self, gear_mock, git_mock, task_valid_mock):
         gear_mock.submitJob = mock.Mock()
 
         cl = client.JobExecutorClient(self.config, self.scheduler)
@@ -148,6 +150,7 @@ class TestJobExecutorClient(TestCase):
         time.sleep(5)
 
         mock_calls = cl.gearman.submitJob.mock_calls
+        task_valid_mock.assert_called_with('loc/sc2')
 
         # verify interval set properly
         self.assertEqual(

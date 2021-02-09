@@ -1,4 +1,5 @@
 ---
+secure: etc/secure.yaml
 gear:
   - server: localhost
     port: 4730

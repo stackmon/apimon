@@ -425,7 +425,8 @@ class CallbackModule(CallbackBase):
                 state=task_data.get('state'),
                 az=task_data.get('az'),
                 raw_response=task_data.get('raw_response'),
-                anonymized_response=task_data.get('anonymized_response')
+                anonymized_response=task_data.get('anonymized_response'),
+                service=task_data.get('service')
             )
 
             self._emit_message(prof_task)

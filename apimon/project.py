@@ -80,7 +80,7 @@ class Project(object):
                 rc = self._ansible_galaxy_install(
                     'collection', requirements_file)
             if rc != 0:
-                self.log.error('Error installing dependencies: RC=%s' % rc)
+                self.log.error('Error installing dependencies: RC=%s', rc)
             return rc
         return 0
 
@@ -89,7 +89,7 @@ class Project(object):
         """
         if not self.project_dir:
             raise RuntimeError('Project work dir is not set')
-        self.log.debug('Getting git repository: %s' % self.repo_url)
+        self.log.debug('Getting git repository: %s', self.repo_url)
         if self.repo:
             return self.repo
         git_path = Path(self.project_dir, '.git')
@@ -167,6 +167,8 @@ class Project(object):
             for scenario in Path(
                     self.project_dir,
                     self.location).glob('scenario*.yaml'):
+                if not scenario.exists():
+                    continue
                 self._tasks.append(
                     scenario.relative_to(self.project_dir).as_posix())
 
