@@ -45,7 +45,8 @@ class EndpointMonitor(threading.Thread):
         self.alerta = alerta
         self.conn = None
         self.service_override = None
-        self.interval = 5
+        self.interval = int(self.config.get_default(
+            'epmon', 'interval', 5))
 
         self.influx_cnf = self.config.get_default(
             'metrics', 'influxdb', {}).copy()
