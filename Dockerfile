@@ -16,7 +16,7 @@ LABEL description="APImon (OpenStack API monitoring) container"
 LABEL maintainer="Open Telekom Cloud (ecosystem)"
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
-    install -y git gcc nmap-ncat procps-ng net-tools \
+    install -y git gcc nmap-ncat procps-ng net-tools xz \
     python3-devel python3-setuptools python3-pip \
     python3-psycopg2 python3-sqlalchemy \
     python3-dns && dnf clean all
@@ -24,17 +24,18 @@ RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
 RUN git config --global user.email "apimon@test.com"
 RUN git config --global user.name "apimon"
 
+RUN useradd apimon
+
 RUN mkdir -p /var/{lib/apimon,log/apimon,log/executor,log/scheduler}
 
-RUN useradd apimon
+RUN chown apimon:apimon /var/lib/apimon && chown -R apimon:apimon /var/log/apimon
 
 WORKDIR /usr/app
 
 COPY ./requirements.txt /usr/app/requirements.txt
 
 RUN \ 
-     git clone https://github.com/opentelekomcloud/python-otcextensions \
---branch metrics && \
+     git clone https://github.com/opentelekomcloud/python-otcextensions && \
 #    git clone https://github.com/ansible/ansible --branch stable-2.10 && \
      git clone https://review.opendev.org/openstack/openstacksdk
 

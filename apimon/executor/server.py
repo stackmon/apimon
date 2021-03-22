@@ -378,6 +378,7 @@ class BaseJob:
 
         env = os.environ.copy()
         env['TASK_EXECUTOR_JOB_ID'] = self.job_id
+        env['APIMON_PROFILER_MESSAGE_SOCKET'] = self.socket_path
         env.update(self.arguments.get('env').get('vars'))
 
         cmd = (self.local_project.get_exec_cmd(
@@ -441,6 +442,8 @@ class AnsibleJob(BaseJob):
 
         config['defaults']['stdout_callback'] = 'apimon_logger'
         config['defaults']['callback_whitelist'] = 'apimon_profiler'
+        if 'callback_apimon_profiler' not in config:
+            config['callback_apimon_profiler'] = dict()
         config['callback_apimon_profiler']['socket'] = \
             self.socket_path
 
@@ -464,6 +467,7 @@ class AnsibleJob(BaseJob):
             self.ansible_plugin_path
         env['APIMON_EXECUTOR_JOB_CONFIG'] = job_log_config_file
         env['ANSIBLE_PYTHON_INTERPRETER'] = '/usr/bin/python3'
+        env['APIMON_PROFILER_MESSAGE_SOCKET'] = self.socket_path
         env.update(self.arguments.get('env').get('vars'))
         # Inform statsd (ansible->openstacksdk->statsd) about our desired stats
         env['STATSD_PREFIX'] = (

@@ -14,11 +14,12 @@
 import logging
 import os
 import signal
+import socket
 import sys
 
 import apimon.cmd
 
-from apimon.lib.statsd import get_statsd_config
+from apimon.lib.statsd import get_statsd_config, normalize_statsd_name
 from apimon.scheduler import scheduler
 from apimon.executor import client
 
@@ -83,13 +84,16 @@ class ApimonScheduler(apimon.cmd.App):
             import gear
             zone = self.args.zone or self.config.get_default(
                 'scheduler', 'zone', 'default_zone')
+            hostname = normalize_statsd_name(socket.gethostname())
 
             (statsd_host, statsd_port, statsd_prefix) = get_statsd_config(
                 self.config)
             if statsd_prefix:
-                statsd_prefix += '.apimon.geard.%s' % zone
+                statsd_prefix += '.apimon.%s.geard.%s' % (
+                    hostname, zone)
             else:
-                statsd_prefix = 'apimon.geard.%s' % zone
+                statsd_prefix = 'apimon.%s.geard.%s' % (
+                    hostname, zone)
 
             host = None
             port = None
