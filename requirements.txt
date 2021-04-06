@@ -7,7 +7,7 @@ statsd
 influxdb
 pbr
 alerta
-stevedore==3.3.0
-#dogpile.cache==0.9.2
+stevedore==1.32.0
+dogpile.cache==0.9.2
 sqlalchemy
 psycopg2

@@ -85,6 +85,9 @@ class TestBaseJob(TestBase):
     def test_run(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.base_job.job_id
+        env_cmp['APIMON_PROFILER_MESSAGE_SOCKET'] = Path(
+            self.base_job.job_work_dir, '.comm_socket').resolve().as_posix()
+
         self.base_job.run()
         self.base_job.wait()
         sp_mock.assert_called_with(
@@ -101,6 +104,9 @@ class TestBaseJob(TestBase):
     def test_execute(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.base_job.job_id
+        env_cmp['APIMON_PROFILER_MESSAGE_SOCKET'] = Path(
+            self.base_job.job_work_dir, '.comm_socket').resolve().as_posix()
+
         self.base_job._prepare_local_work_dir()
         log_file = Path(self.work_dir, 'logfile')
         self.base_job._execute(None, log_file)
@@ -251,6 +257,9 @@ class TestAnsibleJob(TestBase):
         env_cmp['APIMON_EXECUTOR_JOB_CONFIG'] = Path(
             self.job.job_work_dir, 'logging.json').resolve()
         env_cmp['ANSIBLE_PYTHON_INTERPRETER'] = '/usr/bin/python3'
+        env_cmp['APIMON_PROFILER_MESSAGE_SOCKET'] = Path(
+            self.job.job_work_dir, '.comm_socket').resolve().as_posix()
+
         env_cmp['STATSD_PREFIX'] = (
             'openstack.api.{environment}.{zone}'
             .format(**self.job.statsd_extra_keys)

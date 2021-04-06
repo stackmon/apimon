@@ -9,7 +9,7 @@
     vars: &apimon_image_vars
       docker_images:
         - context: .
-          repository: otcinfra/apimon
+          repository: quay.io/opentelekomcloud/apimon
           tags:
             # If zuul.tag is defined: [ '3', '3.19', '3.19.0' ].  Only works for 3-component tags.
             # Otherwise: ['latest']
@@ -17,13 +17,13 @@
 
 - job:
     name: apimon-upload-image
-    parent: otcinfra-upload-image
+    parent: otcinfra-upload-image-quay
     provides: apimon-container-image
     vars: *apimon_image_vars
 
 - job:
     name: apimon-promote-image
-    parent: otcinfra-promote-image
+    parent: otcinfra-promote-image-quay
     vars: *apimon_image_vars
 
 - project:
