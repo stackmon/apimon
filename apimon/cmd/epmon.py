@@ -30,6 +30,12 @@ class ApimonEndpointMonitor(apimon.cmd.App):
         parser = super(ApimonEndpointMonitor, self).create_parser()
 
         parser.add_argument(
+            '--zone',
+            dest='zone',
+            help='EndpointMonitor zone'
+        )
+
+        parser.add_argument(
             'command',
             nargs='?',
             choices=apimon.epmon.server.COMMANDS,
@@ -74,7 +80,7 @@ class ApimonEndpointMonitor(apimon.cmd.App):
         self.log = logging.getLogger("apimon.epmon")
 
         self.epmon = apimon.epmon.server.EndpointMonitorServer(
-            self.config)
+            config=self.config, zone=self.args.zone)
         self.epmon.start()
 
         signal.signal(signal.SIGHUP, self.reconfigure_handler)

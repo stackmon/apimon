@@ -10,26 +10,40 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM fedora:32
+FROM fedora:33
+
+LABEL description="APImon (OpenStack API monitoring) container"
+LABEL maintainer="Open Telekom Cloud (ecosystem)"
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
-    install -y git gcc python3-devel python3-setuptools python3-pip nmap-ncat procps-ng
-
-WORKDIR /usr/app
-ENV PATH=/root/.local/bin:$PATH
-RUN mkdir -p /var/{lib/apimon,log/apimon}
+    install -y git gcc nmap-ncat procps-ng net-tools xz \
+    python3-devel python3-setuptools python3-pip \
+    python3-psycopg2 python3-sqlalchemy \
+    python3-dns && dnf clean all
 
 RUN git config --global user.email "apimon@test.com"
 RUN git config --global user.name "apimon"
 
+RUN useradd apimon
+
+RUN mkdir -p /var/{lib/apimon,log/apimon,log/executor,log/scheduler}
+
+RUN chown apimon:apimon /var/lib/apimon && chown -R apimon:apimon /var/log/apimon
+
+WORKDIR /usr/app
+
 COPY ./requirements.txt /usr/app/requirements.txt
 
-#RUN git clone https://github.com/ansible/ansible --branch stable-2.10 && \
-#    git clone https://review.opendev.org/openstack/openstacksdk
+RUN \ 
+     git clone https://github.com/opentelekomcloud/python-otcextensions && \
+#    git clone https://github.com/ansible/ansible --branch stable-2.10 && \
+     git clone https://review.opendev.org/openstack/openstacksdk
+
+RUN pip3 install -r /usr/app/requirements.txt
 
 #RUN cd ansible && python3 setup.py install --user
-
-RUN pip3 install --user -r /usr/app/requirements.txt
+RUN cd openstacksdk && python3 setup.py install --force
+RUN cd python-otcextensions && python3 setup.py install --force
 
 ADD . /usr/app/apimon
 
@@ -39,8 +53,10 @@ ADD . /usr/app/apimon
 #     && git checkout FETCH_HEAD \
 #     && python3 setup.py install --user
 
-RUN cd apimon && python3 setup.py install --user
+RUN cd apimon && python3 setup.py install
 
-RUN rm -rf /usr/app/ansible
+RUN rm -rf /usr/app/{ansible,apimon,python-otcextensions}
 
-ENV PATH=/root/.local/bin:$PATH
+USER apimon
+
+ENV HOME=/home/apimon

@@ -14,6 +14,28 @@ import os
 import yaml
 
 
+def merge_nested_dicts(a, b):
+    """Naive merge of nested dictinaries
+    """
+    result = dict()
+    if isinstance(a, str) and isinstance(b, str):
+        return b
+    elif isinstance(a, list) and isinstance(b, list):
+        return [a, b]
+    elif isinstance(a, dict) and isinstance(b, dict):
+        for k in a.keys() | b.keys():
+            if k not in a and k in b:
+                result[k] = b[k]
+            elif k in a and k not in b:
+                result[k] = a[k]
+            else:
+                result[k] = merge_nested_dicts(a[k], b[k])
+    else:
+        raise ValueError('Cannot merge different types')
+
+    return result
+
+
 class Config(object):
     def __init__(self):
         self._fp = None
@@ -39,6 +61,18 @@ class Config(object):
 
         with open(fp, 'r') as f:
             self.config = yaml.load(f, Loader=yaml.SafeLoader)
+
+        secure = self.config.get('secure')
+        if secure and os.path.exists(os.path.expanduser(secure)):
+            with open(secure, 'r') as f:
+                secure_config = yaml.load(f, Loader=yaml.SafeLoader)
+            # Merge secure_config into the main config
+            self.config = merge_nested_dicts(self.config, secure_config)
+#            self.config.update(secure_config)
+#            self.config = {k: dict(self.config.get(k, {}),
+#                                   **secure_config.get(k, {})) for k in
+#                           self.config.keys() | secure_config.keys()}
+
         return self
 
     def get_section(self, section):

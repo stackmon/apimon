@@ -80,6 +80,8 @@ class ScheduleWatcher(threading.Thread):
         self.wake_event = threading.Event()
 
         self._tick_interval = 1  # Seconds
+        self._report_queue_size_ticks = 600
+        self._report_queue_size_cnt = 0
 
     def stop(self) -> None:
         self._stopped = True
@@ -107,6 +109,14 @@ class ScheduleWatcher(threading.Thread):
                 if not task.scheduled_at and task.next_run_at <= current_time:
                     # unless it is already "running" and time is up - start it
                     self.client._submit_gear_task(task)
+
+            if self._report_queue_size_cnt == self._report_queue_size_ticks:
+                statsd = self.client.scheduler.statsd
+                if statsd:
+                    self.matrix.report_stats(
+                        statsd)
+                self._report_queue_size_cnt = 0
+            self._report_queue_size_cnt += 1
 
 
 class ApimonGearClient(gear.Client):
@@ -182,6 +192,8 @@ class JobExecutorClient(object):
         self._cleanup_thread.start()
         self.stopped = False
 
+        self.statsd = scheduler.statsd
+
     def start(self) -> None:
         self.log.debug('Starting scheduling of jobs')
 
@@ -193,6 +205,9 @@ class JobExecutorClient(object):
         self._cleanup_thread.stop()
         self._scheduler_thread.join()
         self._cleanup_thread.join()
+        if self.statsd:
+            self._matrix.report_stats(self.statsd, zero=True)
+
         self.log.debug('Stopped')
 
     def _submit_gear_task(self, task, **kwargs) -> None:
@@ -215,34 +230,34 @@ class JobExecutorClient(object):
                     time.sleep(2)
 
     def onTaskCompleted(self, job, result=None) -> JobTask:
-        self.log.debug('Task %s completed with %s' % (job, result))
+        self.log.debug('Task %s completed with %s', job, result)
         task = self.__tasks.get(job.unique)
         data = getJobData(job)
         if task:
             log = logutils.get_annotated_logger(self.log, task._gear_job_id,
                                                 task._apimon_job_id)
-            log.debug('Task returned %s back' % data)
+            log.debug('Task returned %s back', data)
             self.scheduler.task_completed(task)
 
             self.__tasks.pop(task._gear_job_id)
             task.reset_job()
 
         else:
-            self.log.debug('No data for job found')
+            self.log.warn('No data for job found')
 
-            try:
-                if data:
-                    # Try to recover using job data
-                    project = data.get('project', {})
-                    env = data.get('env', {})
-                    if project is not None and env is not None:
-                        task = self._matrix.find_neo(
-                            project['name'], project['task'], env['name'])
+            # try:
+            #     if data:
+            #         # Try to recover using job data
+            #         project = data.get('project', {})
+            #         env = data.get('env', {})
+            #         if project is not None and env is not None:
+            #             task = self._matrix.find_neo(
+            #                 project['name'], project['task'], env['name'])
 
-                        if task:
-                            task.reset_job()
-            except Exception:
-                self.log.exception('Exception during recovering lost job')
+            #             if task:
+            #                 task.reset_job()
+            # except Exception:
+            #     self.log.exception('Exception during recovering lost job')
         return task
 
     def onWorkStatus(self, job) -> None:
@@ -256,14 +271,16 @@ class JobExecutorClient(object):
                 self.scheduler.task_started(task)
 
     def pause_scheduling(self) -> None:
-        self.log.debug('Pausing Job scheduling')
+        self.log.info('Pausing Job scheduling')
         # Disable scheduling
         self._scheduler_thread.pause()
         # Cancel jobs that we can
         self._cancel_tasks()
+        if self.statsd:
+            self._matrix.report_stats(self.statsd, zero=True)
 
     def resume_scheduling(self) -> None:
-        self.log.debug('Resume Job scheduling')
+        self.log.info('Resume Job scheduling')
         # Unpause the scheduler thread
         self._scheduler_thread.unpause()
         self._render_matrix()
@@ -295,8 +312,11 @@ class JobExecutorClient(object):
                 raise ValueError('Environment %s referred in matrix is not '
                                  'known', item['env'])
             if 'tasks' not in item:
+                args = {}
+                if 'interval' in item:
+                    args['interval'] = int(item['interval'])
                 for task in project.tasks():
-                    task_instance = JobTask(project, task, env)
+                    task_instance = JobTask(project, task, env, **args)
                     self._matrix.send_neo(
                         project.name, task, env.name,
                         task_instance)
@@ -308,13 +328,23 @@ class JobExecutorClient(object):
                         interval = int(task[task_name].get('interval', 0))
                         task = task_name
 
+                    task_name = os.path.join(project.location, task)
+                    if not project.is_task_valid(task_name):
+                        self.log.warn(
+                            'Skipping scheduling task %s since it '
+                            'does not exist', task)
+                        continue
+
                     task_instance = JobTask(
                         project,
-                        os.path.join(project.location, task),
+                        task_name,
                         env, interval=interval)
 
                     self._matrix.send_neo(
                         project.name, task, env.name, task_instance)
+
+        if self.statsd:
+            self._matrix.report_stats(self.statsd)
 
     def onDisconnect(self, job) -> None:
         """Disconnect called for each job with the lost server"""
@@ -367,10 +397,10 @@ class JobExecutorClient(object):
                 continue
             current_tasks.append(task.task)
         # Get all tasks which are not scheduled
-        self.log.debug('Current running tasks: %s' % current_tasks)
+        self.log.debug('Current running tasks: %s', current_tasks)
         new_tasks = [value for value in project.tasks() if value not in
                      current_tasks]
-        self.log.debug('Need to schedule newly tasks: %s' % new_tasks)
+        self.log.debug('Need to schedule newly tasks: %s', new_tasks)
         if not new_tasks:
             return
 
@@ -390,3 +420,6 @@ class JobExecutorClient(object):
                         project.name,
                         os.path.join(project.location, task),
                         env.name, task_instance)
+
+        if self.statsd:
+            self._matrix.report_stats(self.statsd)

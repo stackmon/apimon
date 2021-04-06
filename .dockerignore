@@ -1,3 +1,5 @@
 .eggs/**
 .tox/**
 .stestr/**
+wrk/**
+wrk_executor/**

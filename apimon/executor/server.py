@@ -17,6 +17,7 @@ import traceback
 import time
 import socket
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -29,16 +30,20 @@ import gear
 
 import openstack
 
+from apimon.lib.statsd import get_statsd
+
 try:
     from alertaclient.api import Client as alerta_client
 except ImportError:
     alerta_client = None
 
-from apimon.project import Project
 from apimon.lib import commandsocket
 from apimon.lib.logutils import get_annotated_logger
 from apimon.lib.gearworker import GearWorker
+from apimon.project import Project
 
+from apimon.executor import resultprocessor
+from apimon.executor import message
 from apimon.executor.sensors.cpu import CPUSensor
 from apimon.executor.sensors.pause import PauseSensor
 
@@ -46,6 +51,11 @@ from apimon.ansible import logconfig
 
 
 COMMANDS = ['stop', 'pause', 'resume']
+
+
+RE_EXC = re.compile(r"(?P<exception>\w*\b):\s(?P<code>\d{3})\b")
+RE_EXC2 = re.compile(r"\((?P<exception>\w+) (?P<code>\d{3})\)")
+RE_500 = re.compile(r"Internal\s?Server\s?Error")
 
 
 def preexec_function():
@@ -75,10 +85,12 @@ class BaseJob:
     def __init__(self, executor_server, job):
         self.executor_server = executor_server
         self.job = job
+        self.running = False
+
         self.arguments = json.loads(job.arguments)
         self.job_id = self.arguments.get('job_id')
 
-        logger = logging.getLogger("apimon.BaseJob")
+        logger = logging.getLogger("apimon.executor.BaseJob")
         self.log = get_annotated_logger(
             logger, job.unique, self.job_id)
 
@@ -86,22 +98,214 @@ class BaseJob:
             self.executor_server.config.get_default(
                 'executor', 'work_dir'), job.unique)
 
+        self.statsd_extra_keys = {
+            'zone': self.executor_server.zone,
+            'environment': self.arguments['env']['name']
+        }
+        try:
+            self.statsd = get_statsd(
+                self.executor_server.config, self.statsd_extra_keys)
+        except socket.gaierror:
+            pass
+
+        self.socket_path = Path(
+            self.job_work_dir, '.comm_socket').resolve().as_posix()
+        self.socket = None
+        self.socket_thread = None
+
         self.thread = None
 
-    def run(self):
+    def run(self) -> None:
+        """Main entry point"""
         self.running = True
         self.thread = threading.Thread(target=self.execute,
                                        name='job-%s' % self.job.unique)
         self.thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         pass
 
-    def wait(self):
+    def wait(self) -> None:
         if self.thread:
             self.thread.join()
 
-    def _prepare_local_work_dir(self):
+    def _setup_communication_socket(self) -> None:
+        """Setup socket for communication with the child process"""
+        try:
+            if os.path.exists(self.socket_path):
+                os.unlink(self.socket_path)
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.socket.bind(self.socket_path)
+            self.socket.listen(5)
+            self.socket_thread = threading.Thread(target=self._socketListener)
+            self.socket_thread.daemon = True
+            self.socket_thread.start()
+        except Exception:
+            self.log.exception(
+                "Error starting communication socket. Continuing")
+
+    def _teardown_communication_socket(self) -> None:
+        # Shut down communication socket
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                if self.socket:
+                    s.connect(self.socket_path)
+                    s.sendall(b'_stop\n')
+        except Exception:
+            self.log.exception("Error finalizing communitation socket")
+        finally:
+            if self.socket_thread:
+                self.socket_thread.join()
+            if self.socket:
+                self.socket.close()
+            if os.path.exists(self.socket_path):
+                try:
+                    os.unlink(self.socket_path)
+                except Exception:
+                    pass
+
+    def _socketListener(self) -> None:
+        """Socket listener (thread) function"""
+        while self.running:
+            try:
+                s, addr = self.socket.accept()
+                self._talk_through_socket(s)
+            except Exception:
+                self.log.exception("Exception in socket handler")
+
+    def _talk_through_socket(self, conn) -> None:
+        """Socket connection function"""
+        try:
+            buf = b''
+            while True:
+                buf += conn.recv(1)
+                if buf[-1:] == b'\n':
+                    break
+            buf = buf.strip()
+            self.log.debug("Received %s from socket" % (buf,))
+            # Because we use '_stop' internally to wake up a
+            # waiting thread, don't allow it to actually be
+            # injected externally.
+            if buf != b'_stop':
+                data = None
+                try:
+                    data = message.get_message(buf)
+                except json.JSONDecodeError:
+                    self.log.exception("Exception decoding metric")
+                if data and self.statsd_extra_keys:
+                    data.update(self.statsd_extra_keys)
+                if isinstance(data, message.Metric):
+                    name_segments = [
+                        'apimon', 'metric', '{environment}',
+                        '{zone}', data['name']
+                    ]
+                    if 'az' in data:
+                        name_segments.append(data['az'])
+                    name = '.'.join(name_segments)
+                    val = data.get('value', 1)
+                    if data['metric_type'] == 'c':
+                        self.statsd.incr(name, val)
+                    elif data['metric_type'] == 'ms':
+                        # Increment 'attempted' counter
+                        self.statsd.incr('%s.attempted' % name, 1)
+                        name_suffix = data.get('name_suffix')
+                        if name_suffix:
+                            # Expecting name_suffix to be something like
+                            # 'passed'
+                            name = '%s.%s' % (name, name_suffix)
+                            # increment '__suffix__' counter
+                            self.statsd.incr(name, 1)
+                        # save the timing
+                        self.statsd.timing(name, val)
+                    elif data['metric_type'] == 'g':
+                        self.statsd.gauge(name, val)
+                elif isinstance(data, message.ResultTask):
+                    data['job_id'] = self.job_id
+                    self.executor_server.result_processor.add_entry(data)
+                    if data['result'] == 3 and self.executor_server.alerta:
+                        try:
+                            alert = self._prepare_alert_data(data)
+                            self.executor_server.alerta.send_alert(**alert)
+                        except Exception:
+                            self.log.exception('Exception raising alert')
+
+                elif isinstance(data, message.ResultSummary):
+                    data['job_id'] = self.job_id
+                    self.executor_server.result_processor.add_entry(data)
+
+                else:
+                    self.log.error('Unsupported metric data %s' % buf)
+        except Exception:
+            self.log.exception("Exception in socket communication")
+        finally:
+            conn.close()
+
+    def _get_message_error_category(self, msg: str = None) -> str:
+        result = ''
+        if not msg:
+            return ''
+        # SomeSDKException: 123
+        # ResourceNotFound: 404
+        exc = RE_EXC.search(msg)
+        if not exc:
+            # (HTTP 404)
+            exc = RE_EXC2.search(msg)
+        if exc:
+            result = "%s%s" % (exc.group('exception'), exc.group('code'))
+            return result
+
+        # contains InternalServerError
+        if RE_500.search(msg):
+            result = "HTTP500"
+            return result
+        # Quota exceeded, quota exceeded, exceeded for quota
+        if 'uota ' in msg and ' exceed' in msg:
+            result = "QuotaExceeded"
+            return result
+        # WAF
+        if 'The incident ID is:' in msg:
+            result = "WAF"
+            return result
+        if 'ResourceTimeout' in msg or 'Read timed out' in msg:
+            return 'ResourceTimeout'
+        if 'Connection reset by peer' in msg:
+            return 'ConnectionReset'
+        if 'Could not detach attachment' in msg and 'scenario16' in msg:
+            return 'HeatDetachVolume'
+
+        return result if result else msg
+
+    def _prepare_alert_data(self, data: dict) -> dict:
+        link = self.executor_server._get_logs_link(self.job_id)
+        web_link = '<a href="%s">%s</a>' % (link, self.job_id)
+
+        _service = data.get('service')
+        service = ['apimon']
+        if _service:
+            service.append(_service)
+        alert_data = dict(
+            origin=('executor@%s' % self.executor_server.zone),
+            environment=data.get('environment'),
+            service=service,
+            resource=data.get('action'),
+            event=self._get_message_error_category(
+                data.get('anonymized_response', 'N/A')),
+            severity='major',
+            value=data.get('anonymized_response'),
+            raw_data=data.get('raw_response'),
+            type='ApimonExecutorAlert',
+            attributes={
+                'logUrl': link,
+                'logUrlWeb': web_link,
+                'state': data.get('state', 'unknown')
+            }
+        )
+
+        self.log.debug('Alerta info %s' % alert_data)
+
+        return alert_data
+
+    def _prepare_local_work_dir(self) -> None:
         project_args = self.arguments.get('project')
         project = self.executor_server._projects[project_args['name']]
         # Copy project checkout to local wrk_dir
@@ -112,15 +316,52 @@ class BaseJob:
             project.repo_url,
             exec_cmd=project.exec_cmd)
 
-    def execute(self):
+    def execute(self) -> None:
         try:
             self._prepare_local_work_dir()
-            self._execute()
+            self._setup_communication_socket()
+            self.job.sendWorkData(json.dumps(self._base_job_data()))
+            self.job.sendWorkStatus(1, 100)
+            job_log_dir = Path(self.job_work_dir)
+            job_log_dir.mkdir(parents=True, exist_ok=True)
+            # Generate job log config
+            job_log_file = Path(job_log_dir, 'job-output.txt')
+
+            time_start = time.time_ns()
+            self._execute(job_log_dir, job_log_file)
+            time_end = time.time_ns()
+
+            self.job.sendWorkComplete(json.dumps(
+                {
+                    'task': self.arguments['project']['task'],
+                    'result': 'complete',
+                    'duration_sec': int((time_end - time_start) / 1000000000),
+                    'project': {
+                        'name': self.arguments['project']['name'],
+                        'task': self.arguments['project']['task'],
+                    },
+                    'env': {
+                        'name': self.arguments['env']['name']
+                    }
+                }
+            ))
+            try:
+                self.executor_server._upload_log_file_to_swift(
+                    job_log_file, self.job_id)
+            except Exception:
+                self.log.exception('Exception saving job log')
+
+            try:
+                job_log_file.unlink()
+            except Exception:
+                pass
+
         except Exception:
             self.log.exception("Exception while executing job")
             self.job.sendWorkException(traceback.format_exc())
         finally:
             self.running = False
+            self._teardown_communication_socket()
             try:
                 shutil.rmtree(self.job_work_dir)
             except Exception:
@@ -130,20 +371,14 @@ class BaseJob:
             except Exception:
                 self.log.exception("Error finalizing job thread:")
 
-    def _execute(self):
-        # report that job has been taken
-        self.job.sendWorkData(json.dumps(self._base_job_data()))
+    def _execute(self, job_log_dir: Path, job_log_file: Path) -> None:
+        """Main execution logic function"""
 
-        self.job.sendWorkStatus(0, 100)
-
-        job_log_dir = Path(self.job_work_dir)
-        job_log_dir.mkdir(parents=True, exist_ok=True)
-        # Generate job log config
-        job_log_file = Path(job_log_dir, 'job-output.txt')
-        self.job.sendWorkStatus(1, 100)
+        self.job.sendWorkStatus(2, 100)
 
         env = os.environ.copy()
         env['TASK_EXECUTOR_JOB_ID'] = self.job_id
+        env['APIMON_PROFILER_MESSAGE_SOCKET'] = self.socket_path
         env.update(self.arguments.get('env').get('vars'))
 
         cmd = (self.local_project.get_exec_cmd(
@@ -172,23 +407,8 @@ class BaseJob:
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))
 
-        self.executor_server._upload_log_file_to_swift(
-            job_log_file, self.job_id)
-
-        try:
-            job_log_file.unlink()
-        except Exception:
-            pass
-
-        self.job.sendWorkComplete(json.dumps({'a': 'complete'}))
-
-    def _base_job_data(self):
+    def _base_job_data(self) -> dict:
         return {
-            # TODO(mordred) worker_name is needed as a unique name for the
-            # client to use for cancelling jobs on an executor. It's
-            # defaulting to the hostname for now, but in the future we
-            # should allow setting a per-executor override so that one can
-            # run more than one executor on a host.
             'worker_name': self.executor_server.name,
             'worker_hostname': self.executor_server.hostname,
         }
@@ -199,7 +419,7 @@ class AnsibleJob(BaseJob):
 
     def __init__(self, executor_server, job):
         super(AnsibleJob, self).__init__(executor_server, job)
-        logger = logging.getLogger("apimon.AnsibleJob")
+        logger = logging.getLogger("apimon.executor.AnsibleJob")
         self.log = get_annotated_logger(
             logger, job.unique, self.job_id)
 
@@ -218,26 +438,24 @@ class AnsibleJob(BaseJob):
             config.read(ansible_cfg.as_posix())
         else:
             config['defaults'] = {}
+            config['callback_apimon_profiler'] = {}
 
         config['defaults']['stdout_callback'] = 'apimon_logger'
+        config['defaults']['callback_whitelist'] = 'apimon_profiler'
+        if 'callback_apimon_profiler' not in config:
+            config['callback_apimon_profiler'] = dict()
+        config['callback_apimon_profiler']['socket'] = \
+            self.socket_path
 
         with open(ansible_cfg, 'w') as f:
             config.write(f)
 
-    def _execute(self):
+    def _execute(self, job_log_dir: Path, job_log_file: Path) -> None:
         """Execute the task"""
-        # report that job has been taken
-        self.job.sendWorkData(json.dumps(self._base_job_data()))
 
-        self.job.sendWorkStatus(0, 100)
-
-        job_log_dir = Path(self.job_work_dir)
-        job_log_dir.mkdir(parents=True, exist_ok=True)
-        # Generate job log config
-        job_log_file = Path(job_log_dir, 'job-output.txt')
         job_log_config = logconfig.JobLoggingConfig(
-            job_output_file=job_log_file.as_posix())
-        job_log_config_file = Path(job_log_dir, 'logging.json').as_posix()
+            job_output_file=job_log_file.resolve().as_posix())
+        job_log_config_file = Path(job_log_dir, 'logging.json').resolve()
         job_log_config.writeJson(job_log_config_file)
         self._prepare_ansible_cfg(job_log_dir)
 
@@ -248,7 +466,14 @@ class AnsibleJob(BaseJob):
         env['ANSIBLE_CALLBACK_PLUGINS'] = \
             self.ansible_plugin_path
         env['APIMON_EXECUTOR_JOB_CONFIG'] = job_log_config_file
+        env['ANSIBLE_PYTHON_INTERPRETER'] = '/usr/bin/python3'
+        env['APIMON_PROFILER_MESSAGE_SOCKET'] = self.socket_path
         env.update(self.arguments.get('env').get('vars'))
+        # Inform statsd (ansible->openstacksdk->statsd) about our desired stats
+        env['STATSD_PREFIX'] = (
+            'openstack.api.{environment}.{zone}'
+            .format(**self.statsd_extra_keys)
+        )
 
         cmd = (self.local_project.get_exec_cmd(
             self.arguments['project']['task'])).split(' ')
@@ -276,23 +501,13 @@ class AnsibleJob(BaseJob):
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))
 
-        self.executor_server._upload_log_file_to_swift(
-            job_log_file, self.job_id)
-
-        try:
-            job_log_file.unlink()
-        except Exception:
-            pass
-
-        self.job.sendWorkComplete(json.dumps({'a': 'complete'}))
-
 
 class MiscJob(BaseJob):
     """Base functionality of the misc project"""
 
     def __init__(self, executor_server, job):
         super(MiscJob, self).__init__(executor_server, job)
-        logger = logging.getLogger("apimon.MiscJob")
+        logger = logging.getLogger("apimon.executor.MiscJob")
         self.log = get_annotated_logger(
             logger, job.unique, self.job_id)
 
@@ -301,9 +516,12 @@ class ExecutorServer:
 
     log = logging.getLogger('apimon.ExecutorServer')
 
-    def __init__(self, config):
+    def __init__(self, config, zone: str = None):
+        self.log.info('Starting Executor server')
         self.config = config
         self._running = False
+        self.zone = zone or config.get_default(
+            'executor', 'zone', 'default_zone')
 
         self.hostname = self.config.get_default('executor', 'hostname',
                                                 socket.getfqdn())
@@ -321,6 +539,14 @@ class ExecutorServer:
             'executor', 'socket',
             '/var/lib/apimon/executor.socket')
         self.command_socket = commandsocket.CommandSocket(command_socket)
+
+        self.statsd_extra_keys = {
+            'zone': self.zone,
+            'hostname': self.hostname
+        }
+        self.statsd = get_statsd(self.config, self.statsd_extra_keys)
+
+        self.result_processor = resultprocessor.ResultProcessor(self.config)
 
         self._command_running = False
         self.accepting_work = False
@@ -353,6 +579,7 @@ class ExecutorServer:
             worker_args=[self]
         )
 
+        self.log.debug('Connecting to gearman servers')
         self.gear_client = gear.Client()
         for server in self.config.get_section('gear'):
             self.gear_client.addServer(
@@ -373,6 +600,8 @@ class ExecutorServer:
             target=self.run_command, name='command')
         self.command_thread.daemon = True
         self.command_thread.start()
+        self.result_processor.daemon = True
+        self.result_processor.start()
 
         if alerta_client:
             alerta_ep = self.config.get_default('alerta', 'endpoint')
@@ -393,7 +622,10 @@ class ExecutorServer:
         self.governor_thread.start()
 
     def stop(self) -> None:
-        self.log.debug("Stopping")
+        self.log.info("Stopping")
+        # Stop asking for new jobs
+        self.executor_worker.pause()
+
         # The governor can change function registration, so make sure
         # it has stopped.
         self.governor_stop_event.set()
@@ -405,9 +637,6 @@ class ExecutorServer:
             self._running = False
             self._command_running = False
             workers = list(self.job_workers.values())
-
-        # Stop asking for new jobs
-        self.executor_worker.pause()
 
         for job_worker in workers:
             try:
@@ -421,8 +650,15 @@ class ExecutorServer:
         self.executor_worker.stop()
 
         self.command_socket.stop()
+        self.result_processor.stop()
 
-        self.log.debug("Stopped")
+        if self.statsd:
+            # Zero the executor load
+            base_key = 'apimon.executor.{zone}.{hostname}'
+            for sensor in self.sensors:
+                sensor.reportStats(self.statsd, base_key, zero=True)
+
+        self.log.info("Stopped")
 
     def join(self) -> None:
         self.governor_thread.join()
@@ -485,6 +721,14 @@ class ExecutorServer:
         )
         return container
 
+    def _get_logs_link(self, job_id: str):
+        if self._logs_cloud:
+            return '{ep}/{container}/{job_id}/job-output.txt'.format(
+                ep=self._logs_cloud.object_store.get_endpoint(),
+                container=self._logs_container_name,
+                job_id=job_id,
+            )
+
     def _upload_log_file_to_swift(self, job_log_file, job_id) -> None:
         if self._logs_cloud and job_log_file.exists():
             # Due to bug in OTC we need to read the file content
@@ -527,9 +771,11 @@ class ExecutorServer:
         with open(Path(clouds_loc, 'clouds.yaml'), 'w') as f:
             yaml.dump(self._clouds_config, f, default_flow_style=False)
 
-        self._logs_cloud = openstack.connect(
-            self.config.get_default('executor', 'logs_cloud', 'swift')
-        )
+        cloud = self.config.get_default('executor', 'logs_cloud', 'swift')
+        self._logs_cloud = openstack.connect(cloud=cloud)
+        self._logs_cloud.config._statsd_prefix = 'openstack.api.%s.%s' % (
+            cloud, self.zone)
+
         self._logs_container_name = self.config.get_default(
             'executor', 'logs_cloud_container', 'job_logs')
         self._create_logs_container(
@@ -538,6 +784,8 @@ class ExecutorServer:
 
     def execute_job_preparations(self, job) -> None:
         """Basic part of the job"""
+        job.sendWorkStatus(0, 100)
+
         args = json.loads(job.arguments)
         job_id = args.get('job_id')
 
@@ -565,6 +813,7 @@ class ExecutorServer:
         exec_cmd = project_args.get('exec_cmd')
         work_dir = self.config.get_default('executor', 'work_dir')
         commit = project_args.get('commit')
+        rc = 0
         if not project:
             project = Project(
                 name=name,
@@ -576,7 +825,7 @@ class ExecutorServer:
                 commit=commit
             )
             project.get_git_repo()
-            project.prepare()
+            rc = project.prepare()
             self._projects[project.name] = project
         if (
             str(project.get_commit()) != commit
@@ -587,24 +836,37 @@ class ExecutorServer:
             project.repo_ref = repo_ref
             project.exec_cmd = exec_cmd
             project.refresh_git_repo()
-            project.prepare()
+            rc = project.prepare()
+        if rc != 0:
+            del self._projects[project.name]
+        return rc
 
     def execute_ansible_job(self, job) -> None:
         """Main entry function for ansible job requests"""
-        self.execute_job_preparations(job)
+        if self.execute_job_preparations(job) != 0:
+            job.sendWorkFail()
+            return
 
         self.job_workers[job.unique] = AnsibleJob(self, job)
         self.manage_load()
+        if self.statsd:
+            self.statsd.incr('apimon.executor.{zone}.{hostname}.ansible_job')
+
         self.job_workers[job.unique].run()
         # NOTE(gtema): sleep a bit not to accept all jobs immediately on start
         time.sleep(1)
 
     def execute_misc_job(self, job) -> None:
         """Main entry function for misc job requests"""
-        self.execute_job_preparations(job)
+        if self.execute_job_preparations(job) != 0:
+            job.sendWorkFail()
+            return
 
         self.job_workers[job.unique] = MiscJob(self, job)
         self.manage_load()
+        if self.statsd:
+            self.statsd.incr('apimon.executor.{zone}.{hostname}.misc_job')
+
         self.job_workers[job.unique].run()
         # NOTE(gtema): sleep a bit not to accept all jobs immediately on start
         time.sleep(1)
@@ -640,6 +902,10 @@ class ExecutorServer:
                 self.accepting_work = True
                 self.executor_worker.resume()
                 # self.register_work()
+        if self.statsd:
+            base_key = 'apimon.executor.{zone}.{hostname}'
+            for sensor in self.sensors:
+                sensor.reportStats(self.statsd, base_key)
 
     def finish_job(self, unique) -> None:
         """A callback after the job finished processing"""

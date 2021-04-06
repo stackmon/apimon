@@ -16,3 +16,5 @@ class TestConfig(TestCase):
         cfg.read('etc/apimon.yaml')
 
         self.assertEqual('wrk', cfg.get_default('scheduler', 'work_dir'))
+        self.assertEqual('bar', cfg.get_default('statsd', 'foo'))
+        self.assertEqual('localhost', cfg.get_default('statsd', 'host'))
