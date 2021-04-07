@@ -21,11 +21,6 @@
     provides: apimon-container-image
     vars: *apimon_image_vars
 
-- job:
-    name: apimon-promote-image
-    parent: otcinfra-promote-image-quay
-    vars: *apimon_image_vars
-
 - project:
     merge-mode: squash-merge
     check:
@@ -40,6 +35,3 @@
       jobs:
         - otc-tox-pep8
         - apimon-upload-image
-    promote:
-      jobs:
-        - apimon-promote-image
