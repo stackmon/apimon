@@ -19,10 +19,16 @@ import gear
 
 
 class JobTask(object):
-    def __init__(self, project, task, environment, interval=0):
+    def __init__(
+        self,
+        project, task: str,
+        environment, interval: int = 0,
+        zone: str = None
+    ):
         self.project = project
         self.task = task
         self.env = environment
+        self.zone = zone if zone else 'default'
         self.interval = interval
         self.interval_dt = timedelta(minutes=interval)
         self.started = False
@@ -36,34 +42,37 @@ class JobTask(object):
         self._gearman_worker = None
 
     def __repr__(self):
-        return ('<ApimonTask 0x%x ID: %s Project: %s Task: %s>' %
-                (id(self), self._apimon_job_id, self.project.name, self.task))
+        return "<ApimonTask 0x%x ID: %s Project: %s Task: %s>" % (
+            id(self),
+            self._apimon_job_id,
+            self.project.name,
+            self.task,
+        )
 
     def get_job_data(self, job_id, config, config_ver=None):
         data = {
-            'project': {
-                'name': self.project.name,
-                'type': self.project.type,
-                'url': self.project.repo_url,
-                'ref': self.project.repo_ref,
-                'commit': str(self.project.get_commit()),
-                'task': self.task,
-                'exec_cmd': self.project.exec_cmd
+            "project": {
+                "name": self.project.name,
+                "type": self.project.type,
+                "url": self.project.repo_url,
+                "ref": self.project.repo_ref,
+                "commit": str(self.project.get_commit()),
+                "task": self.task,
+                "exec_cmd": self.project.exec_cmd,
             },
-            'env': {
-                'name': self.env.name
-            }
+            "env": {"name": self.env.name},
+            "zone": self.zone,
         }
 
         env = self.env.env
         if env:
-            data['env']['vars'] = env
+            data["env"]["vars"] = env
 
         if job_id:
-            data['job_id'] = job_id
+            data["job_id"] = job_id
 
         if config_ver:
-            data['config_version'] = config_ver
+            data["config_version"] = config_ver
 
         return data
 
@@ -76,11 +85,9 @@ class JobTask(object):
         self._gear_job_id = uuid.uuid4().hex
 
         gearman_job = gear.TextJob(
-            'apimon:%s' % self.project.type,
-            json.dumps(self.get_job_data(job_id,
-                                         config,
-                                         config_version)),
-            unique=self._gear_job_id
+            "apimon:%s" % self.project.type,
+            json.dumps(self.get_job_data(job_id, config, config_version)),
+            unique=self._gear_job_id,
         )
 
         self._gearman_job = gearman_job
@@ -109,12 +116,11 @@ class TestEnvironment(object):
     def __init__(self, config, clouds_config, name, **kwargs):
         self.name = name
         self.env = None
-        if 'env' in kwargs:
-            self.env = kwargs.get('env')
+        if "env" in kwargs:
+            self.env = kwargs.get("env")
 
     def __repr__(self):
-        return ('<TestEnvironment 0x%x Name: %s>' %
-                (id(self), self.name))
+        return "<TestEnvironment 0x%x Name: %s>" % (id(self), self.name)
 
 
 class Matrix(object):
@@ -122,6 +128,7 @@ class Matrix(object):
 
     This is more or less a schedule
     """
+
     def __init__(self):
         self._matrix = dict()
 
@@ -140,7 +147,7 @@ class Matrix(object):
                 _env = _task.get(env)
                 if _env:
                     return _env
-        raise ValueError('Neo is not in the matrix')
+        raise ValueError("Neo is not in the matrix")
 
     def send_neo(self, project, task, env, task_instance):
         """Send Neo to the given location to repair the matrix"""
@@ -156,3 +163,21 @@ class Matrix(object):
             for _, task_data in project_data.items():
                 for _, env_data in task_data.items():
                     yield env_data
+
+    def report_stats(self, statsd, zero: bool = False) -> None:
+        _stats = {}
+        for pname, project_data in self._matrix.items():
+            _stats[pname] = {}
+            for tname, task_data in project_data.items():
+                for ename, env_data in task_data.items():
+                    try:
+                        _stats[pname][ename] += 1
+                    except KeyError:
+                        _stats[pname][ename] = 1
+        base_name = 'apimon.scheduler.queue.{project}.{env}.{zone}.cnt_tasks'
+        for pname, pdata in _stats.items():
+            for ename, cnt_tasks in pdata.items():
+                statsd.gauge(
+                    base_name, cnt_tasks if not zero else 0,
+                    env=ename, project=pname
+                )

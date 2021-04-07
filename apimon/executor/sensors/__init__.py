@@ -34,7 +34,7 @@ class SensorInterface(object, metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def reportStats(self, statsd, base_key):
+    def reportStats(self, statsd, base_key: str, zero: bool = False):
         """Report statistics to statsd
 
         :param statsd: the statsd object to use for reporting

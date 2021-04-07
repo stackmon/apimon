@@ -9,7 +9,7 @@
     vars: &apimon_image_vars
       docker_images:
         - context: .
-          repository: otcinfra/apimon
+          repository: opentelekomcloud/apimon
           tags:
             # If zuul.tag is defined: [ '3', '3.19', '3.19.0' ].  Only works for 3-component tags.
             # Otherwise: ['latest']
@@ -17,7 +17,7 @@
 
 - job:
     name: apimon-upload-image
-    parent: otcinfra-upload-image
+    parent: otcinfra-upload-image-quay
     provides: apimon-container-image
     vars: *apimon_image_vars
 
@@ -25,13 +25,13 @@
     merge-mode: squash-merge
     check:
       jobs:
-        - tox-pep8
-        - tox-py38
+        - otc-tox-pep8
+        - otc-tox-py38
         - apimon-build-image
     check-post:
       jobs:
         - apimon-upload-image
     gate:
       jobs:
-        - tox-pep8
+        - otc-tox-pep8
         - apimon-upload-image

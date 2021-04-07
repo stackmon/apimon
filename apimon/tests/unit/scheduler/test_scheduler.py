@@ -33,7 +33,8 @@ class TestProjectCleanup(TestCase):
         sdk_mock.Connection = mock.Mock(return_value=conn_mock)
         conn_mock.project_cleanup = mock.Mock()
 
-        pc = _scheduler.ProjectCleanup(self.config)
+        statsd_mock = mock.Mock()
+        pc = _scheduler.ProjectCleanup(self.config, statsd_mock)
         pc.start()
         pc.wake_event.set()
 

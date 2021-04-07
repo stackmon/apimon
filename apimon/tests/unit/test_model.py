@@ -21,18 +21,29 @@ from apimon import model
 
 
 class TestJobTask(TestCase):
-
     def setUp(self):
         super(TestJobTask, self).setUp()
-        self.project = project.Project('fake_proj', 'fake_url', 'master',
-                                       'ansible', 'fake_loc', 'fake_cmd %s',
-                                       'wrk_dir')
+        self.project = project.Project(
+            "fake_proj",
+            "fake_url",
+            "master",
+            "ansible",
+            "fake_loc",
+            "fake_cmd %s",
+            "wrk_dir",
+        )
 
-        self.project_misc = project.Project('fake_proj', 'fake_url', 'master',
-                                            'misc', 'fake_loc', 'misc_cmd %s',
-                                            'wrk_dir')
+        self.project_misc = project.Project(
+            "fake_proj",
+            "fake_url",
+            "master",
+            "misc",
+            "fake_loc",
+            "misc_cmd %s",
+            "wrk_dir",
+        )
         self.task = uuid.uuid4().hex
-        self.env = model.TestEnvironment(None, None, 'fake_env')
+        self.env = model.TestEnvironment(None, None, "fake_env")
 
     def test_basic(self):
         task = model.JobTask(self.project, self.task, self.env)
@@ -42,60 +53,71 @@ class TestJobTask(TestCase):
         self.assertEqual(datetime.timedelta(minutes=0), task.interval_dt)
         self.assertEqual(0, task.interval)
 
-    @mock.patch('apimon.project.Project.get_commit',
-                return_value='fake_commit')
+    @mock.patch("apimon.project.Project.get_commit",
+                return_value="fake_commit")
     def test_prepare_gear_job(self, commit_mock):
         task = model.JobTask(self.project, self.task, self.env)
-        job = task.prepare_gear_job(None, 5, 'fake_job_id')
+        job = task.prepare_gear_job(None, 5, "fake_job_id")
         self.assertIsNotNone(task._gear_job_id)
-        self.assertEqual('fake_job_id', task._apimon_job_id)
+        self.assertEqual("fake_job_id", task._apimon_job_id)
         self.assertIsNotNone(job)
-        self.assertEqual('apimon:ansible', job.name)
+        self.assertEqual("apimon:ansible", job.name)
         self.assertEqual(task._gear_job_id, job.unique)
-        self.assertDictEqual({
-            'config_version': 5,
-            'env': {'name': 'fake_env'},
-            'job_id': 'fake_job_id',
-            'project': {'commit': 'fake_commit',
-                        'exec_cmd': 'fake_cmd %s',
-                        'name': 'fake_proj',
-                        'ref': 'master',
-                        'task': self.task,
-                        'type': 'ansible',
-                        'url': 'fake_url'}},
-            json.loads(job.arguments))
+        self.assertDictEqual(
+            {
+                "config_version": 5,
+                "env": {"name": "fake_env"},
+                "job_id": "fake_job_id",
+                "project": {
+                    "commit": "fake_commit",
+                    "exec_cmd": "fake_cmd %s",
+                    "name": "fake_proj",
+                    "ref": "master",
+                    "task": self.task,
+                    "type": "ansible",
+                    "url": "fake_url",
+                },
+                "zone": "default"
+            },
+            json.loads(job.arguments),
+        )
 
         task.reset_job()
 
         self.assertIsNone(task._apimon_job_id)
         self.assertIsNone(task._gear_job_id)
 
-    @mock.patch('apimon.project.Project.get_commit',
-                return_value='fake_commit')
+    @mock.patch("apimon.project.Project.get_commit",
+                return_value="fake_commit")
     def test_prepare_misc_job(self, commit_mock):
         task = model.JobTask(self.project_misc, self.task, self.env)
-        job = task.prepare_gear_job(None, 5, 'fake_job_id')
+        job = task.prepare_gear_job(None, 5, "fake_job_id")
         self.assertIsNotNone(task._gear_job_id)
-        self.assertEqual('fake_job_id', task._apimon_job_id)
+        self.assertEqual("fake_job_id", task._apimon_job_id)
         self.assertIsNotNone(job)
-        self.assertEqual('apimon:misc', job.name)
+        self.assertEqual("apimon:misc", job.name)
         self.assertEqual(task._gear_job_id, job.unique)
-        self.assertDictEqual({
-            'config_version': 5,
-            'env': {'name': 'fake_env'},
-            'job_id': 'fake_job_id',
-            'project': {'commit': 'fake_commit',
-                        'exec_cmd': 'misc_cmd %s',
-                        'name': 'fake_proj',
-                        'ref': 'master',
-                        'task': self.task,
-                        'type': 'misc',
-                        'url': 'fake_url'}},
-            json.loads(job.arguments))
+        self.assertDictEqual(
+            {
+                "config_version": 5,
+                "env": {"name": "fake_env"},
+                "job_id": "fake_job_id",
+                "project": {
+                    "commit": "fake_commit",
+                    "exec_cmd": "misc_cmd %s",
+                    "name": "fake_proj",
+                    "ref": "master",
+                    "task": self.task,
+                    "type": "misc",
+                    "url": "fake_url",
+                },
+                "zone": "default"
+            },
+            json.loads(job.arguments),
+        )
 
 
 class TestMatrix(TestCase):
-
     def setUp(self):
         super(TestMatrix, self).setUp()
 
@@ -106,17 +128,15 @@ class TestMatrix(TestCase):
     def test_send_neo(self):
         matrix = model.Matrix()
         inst = model.JobTask(None, None, None)
-        matrix.send_neo('prj', 'task', 'env', inst)
-        self.assertDictEqual(
-            {'prj': {'task': {'env': inst}}},
-            matrix._matrix)
+        matrix.send_neo("prj", "task", "env", inst)
+        self.assertDictEqual({"prj": {"task": {"env": inst}}}, matrix._matrix)
 
     def test_tasks(self):
         matrix = model.Matrix()
         self.assertEqual([], list(matrix.tasks()))
 
         inst = model.JobTask(None, None, None)
-        matrix.send_neo('prj', 'task', 'env', inst)
+        matrix.send_neo("prj", "task", "env", inst)
 
         items = list(matrix.tasks())
         self.assertEqual(1, len(items))

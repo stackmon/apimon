@@ -1,0 +1,5 @@
+---
+additional_vars:
+  foo: bar
+statsd:
+  foo: bar
