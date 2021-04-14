@@ -142,9 +142,13 @@ class EndpointMonitor(threading.Thread):
                 if self.alerta:
                     try:
                         self.alerta.heartbeat(
-                            origin='apimon.epmon.%s.%s' % (
-                                self.zone, self.target_cloud),
-                            tags=['apimon', 'epmon']
+                            origin='apimon.epmon',
+                            tags=['apimon', 'epmon'],
+                            attributes={
+                                'zone': self.zone,
+                                'cloud': self.target_cloud,
+                                'service': ['apimon', 'epmon'],
+                            }
                         )
                     except Exception:
                         self.log.exception('Error sending heartbeat')
