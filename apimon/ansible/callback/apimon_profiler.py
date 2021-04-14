@@ -446,7 +446,7 @@ class CallbackModule(CallbackBase):
         rc = 3 if not ignore_errors else 2
         self._update_task_stats(result, rc)
 
-    def _emit_message(self, data: dict) -> None:
+    def _emit_message(self, data):
         if self.message_socket_address:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as _socket:
                 try:
@@ -539,23 +539,11 @@ class CallbackModule(CallbackBase):
             'Overall duration of APImon tasks in playbook %s is: %s s' %
             (self.playbook_name, str(overall_apimon_duration / 1000)))
 
-    def _get_metric_data(self, name: str,
-                         vals: dict, **kwargs) -> dict:
+    def _get_metric_data(
+        self, name, vals, **kwargs
+    ):
         rc = int(vals.get('rc', -1))
         dt = []
-#            message.Metric(
-#                '%s.attempted' % (name),
-#                value=1,
-#                metric_type='c',
-#                **kwargs
-#            ),
-#            message.Metric(
-#                '%s.rc_%s' % (name, str(rc)),
-#                value=1,
-#                metric_type='c',
-#                **kwargs
-#            )
-#        ]
         if rc == 0:
             kwargs['name_suffix'] = 'passed'
         elif rc == 1:
@@ -572,7 +560,7 @@ class CallbackModule(CallbackBase):
         ))
         return dt
 
-    def _anonymize_message(self, msg: str) -> str:
+    def _anonymize_message(self, msg):
         # Anonymize remaining part
         # Project_id
         result = msg
