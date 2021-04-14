@@ -127,6 +127,7 @@ class CallbackModule(CallbackBase):
 
     ACTION_SERVICE_MAP = {
         'auth': 'identity',
+        'availability_zone_info': 'block_storage',
         'client_config': 'general',
         'group': 'identity',
         'group_info': 'identity',
@@ -164,6 +165,7 @@ class CallbackModule(CallbackBase):
         'routers_info': 'network',
         'network': 'network',
         'network_info': 'network',
+        'networks_info': 'network',
         'subnet': 'network',
         'subnet_info': 'network',
         'subnets_info': 'network',
