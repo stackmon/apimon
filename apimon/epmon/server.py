@@ -142,7 +142,8 @@ class EndpointMonitor(threading.Thread):
                 if self.alerta:
                     try:
                         self.alerta.heartbeat(
-                            origin='apimon.epmon',
+                            origin='apimon.epmon.%s.%s' % (
+                                self.zone, self.target_cloud),
                             tags=['apimon', 'epmon'],
                             attributes={
                                 'zone': self.zone,
