@@ -21,3 +21,5 @@ cover/
 !.keep
 .stestr
 wrk
+releasenotes/build
+doc/build
