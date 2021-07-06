@@ -1,0 +1,4 @@
+---
+fixes:
+  - |
+    Fixes Ansible deprecation warning about renamed config option.
