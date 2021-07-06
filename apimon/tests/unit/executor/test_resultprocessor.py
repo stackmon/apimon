@@ -21,19 +21,19 @@ from apimon.executor import resultprocessor
 
 
 class TestResultProcessor(unittest.TestCase):
-    def setUp(self):
-        super(TestResultProcessor, self).setUp()
-        self.config = _config.Config()
-        self.config.read('etc/apimon.yaml')
-        self.processor = resultprocessor.ResultProcessor(
-            self.config
+    @classmethod
+    def setUpClass(cls):
+        cls.config = _config.Config()
+        cls.config.read('etc/apimon.yaml')
+        cls.processor = resultprocessor.ResultProcessor(
+            cls.config
         )
-        self.processor.start()
+        cls.processor.start()
 
-    def tearDown(self):
-        self.processor.stop()
-        self.processor.join()
-        super(TestResultProcessor, self).tearDown()
+    @classmethod
+    def tearDownClass(cls):
+        cls.processor.stop()
+        cls.processor.join()
 
     def test_task(self):
         if not self.processor.db_conn.connected:
@@ -64,3 +64,23 @@ class TestResultProcessor(unittest.TestCase):
             self.assertEqual(rs.environment, summ['environment'])
             sess.session().delete(rt)
             sess.session().delete(rs)
+
+    def test_job(self):
+        if not self.processor.db_conn.connected:
+            self.skipTest('DB not available for test')
+
+        job = dict(
+            job_id=uuid.uuid4().hex,
+            name=uuid.uuid4().hex, result=1, duration=2,
+            environment=uuid.uuid4().hex,
+            zone=uuid.uuid4().hex,
+            log_url=uuid.uuid4().hex
+        )
+
+        self.processor.add_job_entry(job)
+        time.sleep(1)
+        with self.processor.db_conn.get_session() as sess:
+            je = sess.get_job(job['job_id'])
+            self.assertEqual(je.duration, job['duration'])
+
+            sess.session().delete(je)

@@ -317,6 +317,7 @@ class BaseJob:
             exec_cmd=project.exec_cmd)
 
     def execute(self) -> None:
+        rc = 0
         try:
             self._prepare_local_work_dir()
             self._setup_communication_socket()
@@ -328,7 +329,7 @@ class BaseJob:
             job_log_file = Path(job_log_dir, 'job-output.txt')
 
             time_start = time.time_ns()
-            self._execute(job_log_dir, job_log_file)
+            rc = self._execute(job_log_dir, job_log_file)
             time_end = time.time_ns()
 
             self.job.sendWorkComplete(json.dumps(
@@ -346,8 +347,17 @@ class BaseJob:
                 }
             ))
             try:
-                self.executor_server._upload_log_file_to_swift(
+                log_url = self.executor_server._upload_log_file_to_swift(
                     job_log_file, self.job_id)
+                self.executor_server.result_processor.add_job_entry(job=dict(
+                    job_id=self.job_id,
+                    name=self.arguments['project']['task'],
+                    result=rc,
+                    duration=int((time_end - time_start) / 1000000000),
+                    environment=self.arguments['env']['name'],
+                    zone=self.executor_server.zone,
+                    log_url=log_url
+                ))
             except Exception:
                 self.log.exception('Exception saving job log')
 
@@ -380,6 +390,7 @@ class BaseJob:
         env['TASK_EXECUTOR_JOB_ID'] = self.job_id
         env['APIMON_PROFILER_MESSAGE_SOCKET'] = self.socket_path
         env.update(self.arguments.get('env').get('vars'))
+        rc = 0
 
         cmd = (self.local_project.get_exec_cmd(
             self.arguments['project']['task'])).split(' ')
@@ -396,7 +407,7 @@ class BaseJob:
                     restore_signals=False)
 
                 # Wait for child process to finish
-                process.wait()
+                rc = process.wait()
 
             if self.log.isEnabledFor(logging.DEBUG):
                 with open(job_log_file, 'r') as log_fd:
@@ -406,6 +417,8 @@ class BaseJob:
 
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))
+
+        return rc
 
     def _base_job_data(self) -> dict:
         return {
@@ -453,6 +466,7 @@ class AnsibleJob(BaseJob):
     def _execute(self, job_log_dir: Path, job_log_file: Path) -> None:
         """Execute the task"""
 
+        rc = 0
         job_log_config = logconfig.JobLoggingConfig(
             job_output_file=job_log_file.resolve().as_posix())
         job_log_config_file = Path(job_log_dir, 'logging.json').resolve()
@@ -496,10 +510,12 @@ class AnsibleJob(BaseJob):
                 self.log.error('%s', stderr.decode('utf-8'))
 
             # Wait for child process to finish
-            process.wait()
+            rc = process.wait()
 
         else:
             self.log.debug('Simulating execution of %s in %s' % (cmd, env))
+
+        return rc
 
 
 class MiscJob(BaseJob):
@@ -721,15 +737,16 @@ class ExecutorServer:
         )
         return container
 
-    def _get_logs_link(self, job_id: str):
+    def _get_logs_link(self, job_id: str, fname: str = 'job-output.txt'):
         if self._logs_cloud:
-            return '{ep}/{container}/{job_id}/job-output.txt'.format(
+            return '{ep}/{container}/{job_id}/{fname}'.format(
                 ep=self._logs_cloud.object_store.get_endpoint(),
                 container=self._logs_container_name,
                 job_id=job_id,
+                fname=fname
             )
 
-    def _upload_log_file_to_swift(self, job_log_file, job_id) -> None:
+    def _upload_log_file_to_swift(self, job_log_file, job_id) -> str:
         if self._logs_cloud and job_log_file.exists():
             # Due to bug in OTC we need to read the file content
             log_data = open(job_log_file, 'r').read()
@@ -748,7 +765,7 @@ class ExecutorServer:
                                 'executor', 'log_swift_keep_time', '1209600')),
                         'content_type': 'text/plain'
                     })
-                return True
+                return self._get_logs_link(job_id, job_log_file.name)
             except openstack.exceptions.SDKException as e:
                 self.log.exception('Error uploading log to Swift')
                 if self.alerta:
@@ -762,7 +779,7 @@ class ExecutorServer:
                         value=str(e)
                     )
 
-                return False
+                return ''
 
     def _flush_clouds_config(self) -> None:
         """Write clouds.yaml to FS into home dir"""

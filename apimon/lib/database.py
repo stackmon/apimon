@@ -10,7 +10,6 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 #
-
 import datetime
 import logging
 
@@ -101,6 +100,29 @@ class DatabaseSession:
         self.session().add(rs)
         return rs
 
+    def create_job_entry(self, *args, **kw):
+        le = self.connection.Job(*args, **kw)
+        self.session().add(le)
+        return le
+
+    def get_job(self, job_id):
+
+        table = self.connection.Job.__table__
+
+        q = self.session().query(self.connection.Job)
+
+        q = self.listFilter(q, table.c.job_id, job_id)
+
+        try:
+            return q.one()
+        except orm.exc.NoResultFound:
+            return None
+        except orm.exc.MultipleResultsFound:
+            self.log.error(
+                "Multiple Jobs found with job_id=%s",
+                job_id)
+            return None
+
     def execute(self, query):
         self.session().execute(query)
         self.session().commit()
@@ -133,6 +155,7 @@ class SQLConnection:
                 self.engine.execute(self.partition_function)
                 self.engine.execute(self.task_trigger)
                 self.engine.execute(self.summary_trigger)
+                self.engine.execute(self.job_trigger)
 
             self.connected = True
         except sa.exc.NoSuchModuleError:
@@ -218,9 +241,37 @@ class SQLConnection:
                         # No use from not expanded vars
                         setattr(self, k, 'N/A')
 
+        class Job(Base):
+            __tablename__ = 'jobs'
+            job_id = sa.Column(sa.String(32), primary_key=True, index=True)
+            name = sa.Column(sa.String(255))
+            result = sa.Column(sa.Integer)
+            duration = sa.Column(sa.Integer)
+            timestamp = sa.Column(sa.DateTime, primary_key=True,
+                                  default=datetime.datetime.now)
+            environment = sa.Column(sa.String(255))
+            zone = sa.Column(sa.String(32))
+            log_url = sa.Column(sa.String(255))
+
+            __table_args__ = (
+                sa.Index('job_timestamp_idx', 'timestamp'),
+                sa.Index('job_timestamp_result_idx', 'timestamp',
+                         'result'),
+                sa.Index('job_timestamp_result_name_env_zone_idx',
+                         'timestamp', 'result', 'name', 'environment', 'zone'),
+            )
+
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    if k == 'timestamp':
+                        self.timestamp = datetime.datetime.fromisoformat(v)
+                    else:
+                        setattr(self, k, v)
+
         self.Base = Base
         self.ResultTask = ResultTask
         self.ResultSummary = ResultSummary
+        self.Job = Job
 
         self.partition_function = sa.DDL(
             """
@@ -264,6 +315,15 @@ FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
 DROP TRIGGER IF EXISTS result_summary_insert_trigger ON result_summary;
 CREATE TRIGGER result_summary_insert_trigger
 BEFORE INSERT ON result_summary
+FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
+            """
+        )
+
+        self.job_trigger = sa.DDL(
+            """
+DROP TRIGGER IF EXISTS jobs_insert_trigger ON jobs;
+CREATE TRIGGER jobs_insert_trigger
+BEFORE INSERT ON jobs
 FOR EACH ROW EXECUTE PROCEDURE create_partition_and_insert();
             """
         )
