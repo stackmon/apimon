@@ -23,6 +23,7 @@
 
 - project:
     merge-mode: squash-merge
+    default-branch: main
     check:
       jobs:
         - otc-tox-pep8
@@ -34,4 +35,7 @@
     gate:
       jobs:
         - otc-tox-pep8
+        - apimon-upload-image
+    release:
+      jobs:
         - apimon-upload-image
