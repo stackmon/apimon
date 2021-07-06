@@ -242,7 +242,7 @@ class TestAnsibleJob(TestBase):
         ansible_cfg = Path(self.job.job_work_dir, 'ansible.cfg')
         config.read(ansible_cfg)
         self.assertEqual('apimon_profiler',
-                         config['defaults']['callback_whitelist'])
+                         config['defaults']['callback_enabled'])
         self.assertEqual('apimon_logger',
                          config['defaults']['stdout_callback'])
         self.assertEqual(self.job.socket_path,

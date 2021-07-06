@@ -454,7 +454,7 @@ class AnsibleJob(BaseJob):
             config['callback_apimon_profiler'] = {}
 
         config['defaults']['stdout_callback'] = 'apimon_logger'
-        config['defaults']['callback_whitelist'] = 'apimon_profiler'
+        config['defaults']['callback_enabled'] = 'apimon_profiler'
         if 'callback_apimon_profiler' not in config:
             config['callback_apimon_profiler'] = dict()
         config['callback_apimon_profiler']['socket'] = \
