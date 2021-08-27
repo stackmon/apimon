@@ -234,8 +234,12 @@ class CallbackModule(CallbackBase):
                 or task.action.startswith('openstack')
                 # This is bad, but what else can we do?
                 or task.action[:3] in ['rds', 'cce']
-                or task.action in ('script', 'command',
-                                   'wait_for_connection', 'wait_for')
+                or task.action in (
+                    'script', 'ansible.builtin.script',
+                    'command', 'ansible.builtint.command',
+                    'wait_for_connection',
+                    'ansible.builtin.wait_for_connection',
+                    'wait_for', 'ansible.builtin.wait_for')
             )
         )
 

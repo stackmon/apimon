@@ -1,0 +1,7 @@
+---
+features:
+  - |
+    Rebase to OTCE 0.22 to make use of the repaired CCE project cleanup
+fixes:
+  - |
+    For selected ansible modules (in the is_interesting comarison) use also FQCN.
