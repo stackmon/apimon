@@ -13,33 +13,16 @@
 import os
 import yaml
 
+import hvac
 
-def merge_nested_dicts(a, b):
-    """Naive merge of nested dictinaries
-    """
-    result = dict()
-    if isinstance(a, str) and isinstance(b, str):
-        return b
-    elif isinstance(a, list) and isinstance(b, list):
-        return [a, b]
-    elif isinstance(a, dict) and isinstance(b, dict):
-        for k in a.keys() | b.keys():
-            if k not in a and k in b:
-                result[k] = b[k]
-            elif k in a and k not in b:
-                result[k] = a[k]
-            else:
-                result[k] = merge_nested_dicts(a[k], b[k])
-    else:
-        raise ValueError('Cannot merge different types')
-
-    return result
+from apimon.lib import utils
 
 
 class Config(object):
     def __init__(self):
         self._fp = None
-        self.config = None
+        self.config = {}
+        self.vault_client = None
 
     def _find_config(self, path=None):
         if not path and self._fp:
@@ -56,6 +39,19 @@ class Config(object):
                 return self._fp
         raise Exception("Unable to locate config file in %s" % locations)
 
+    def _connect_to_vault(self, url, **kwargs):
+        self.vault_client = hvac.Client(
+            url=url,
+            timeout=int(kwargs.get('timeout', 10))
+        )
+        if 'role_id' in kwargs and 'secret_id' in kwargs:
+            self.vault_client.auth.approle.login(
+                role_id=kwargs['role_id'],
+                secret_id=kwargs['secret_id'],
+            )
+        elif 'token' in kwargs:
+            self.vault_client.token = kwargs['token']
+
     def read(self, path=None):
         fp = self._find_config(path)
 
@@ -67,18 +63,23 @@ class Config(object):
             with open(secure, 'r') as f:
                 secure_config = yaml.load(f, Loader=yaml.SafeLoader)
             # Merge secure_config into the main config
-            self.config = merge_nested_dicts(self.config, secure_config)
-#            self.config.update(secure_config)
-#            self.config = {k: dict(self.config.get(k, {}),
-#                                   **secure_config.get(k, {})) for k in
-#                           self.config.keys() | secure_config.keys()}
+            self.config = utils.merge_nested_dicts(self.config, secure_config)
 
+        if 'vault' in self.config:
+            vault_config = self.config['vault']
+            self._connect_to_vault(
+                vault_config['addr'],
+                **vault_config
+            )
         return self
 
     def get_section(self, section):
         return self.config.get(section, {})
 
-    def get_default(self, section, option, default=None, expand_user=False):
+    def get_default(
+        self, section, option, default=None,
+        expand_user=False, expand_vault=True
+    ):
         if not section or not option:
             raise RuntimeError('get_default without section/option is not '
                                'possible')
@@ -97,4 +98,20 @@ class Config(object):
             value = default
         if expand_user and value:
             return os.path.expanduser(value)
+        if expand_vault and value:
+            return utils.expand_vars(value, self.vault_client)
         return value
+
+    def get_cloud(self, section, name):
+        for cloud in self.config.get(section, []):
+            if cloud.get('name') == name:
+                return utils.expand_dict_vars(
+                    cloud.get('data'), self.vault_client)
+
+    def get_clouds(self, section, expand_vault=False):
+        for cloud in self.config.get(section, []):
+            if expand_vault:
+                yield cloud.get('name'), utils.expand_dict_vars(
+                    cloud.get('data'), self.vault_client)
+            else:
+                yield cloud.get('name'), cloud.get('data')
