@@ -60,3 +60,18 @@ class TestScheduler(TestCase):
 
     def test_basic(self):
         self.assertTrue(True)
+
+    def test_load_clouds_config(self):
+        self.assertDictEqual({}, self.scheduler._clouds_config)
+        self.scheduler._load_clouds_config()
+        expected = {
+            'clouds': {x['name']: x['data'] for x in
+                       self.config.get_section('clouds')}
+        }
+        expected.update(
+            metrics=self.config.get_section('metrics'),
+            _version=self.scheduler._config_version
+        )
+        self.assertDictEqual(
+            expected,
+            self.scheduler._clouds_config)

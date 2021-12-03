@@ -11,25 +11,26 @@
 # under the License.
 
 import configparser
-import mock
-import unittest
-import uuid
-import tempfile
+import json
 import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
+from unittest import TestCase, mock
+import uuid
 
 from pathlib import Path
 
 from apimon import project as _project
 from apimon.lib import config as _config
+from apimon.lib.gearworker import GearWorker
 from apimon.executor import server
 from apimon.executor import message
 
 
-class TestBase(unittest.TestCase):
+class TestBase(TestCase):
     def setUp(self):
         super(TestBase, self).setUp()
         self.config = _config.Config()
@@ -47,6 +48,7 @@ class TestBase(unittest.TestCase):
         self.executor_server.zone = 'fake_zone'
         self.executor_server.config = self.config
         self.executor_server.result_processor = mock.Mock()
+        self.executor_server._upload_log_file_to_swift = mock.Mock()
         _projects = {
             'fake_proj': self.project
         }
@@ -88,6 +90,12 @@ class TestBaseJob(TestBase):
         env_cmp['APIMON_PROFILER_MESSAGE_SOCKET'] = Path(
             self.base_job.job_work_dir, '.comm_socket').resolve().as_posix()
 
+        prc = mock.Mock()
+        prc.wait = mock.Mock(return_value=2)
+        sp_mock.return_value = prc
+        self.executor_server._upload_log_file_to_swift.return_value = \
+            'fake_swift_url'
+
         self.base_job.run()
         self.base_job.wait()
         sp_mock.assert_called_with(
@@ -98,6 +106,24 @@ class TestBaseJob(TestBase):
             env=env_cmp,
             cwd=self.base_job.job_work_dir,
             restore_signals=False
+        )
+        self.executor_server._upload_log_file_to_swift.assert_called_with(
+            Path(self.base_job.job_work_dir, 'job-output.txt'),
+            self.base_job.job_id
+        )
+        self.executor_server.result_processor.add_job_entry.assert_called_with(
+            job={
+                'job_id': self.base_job.job_id,
+                'name': 'fake_task',
+                'result': 2,
+                'duration': 0,
+                'environment': 'env_name',
+                'zone': 'fake_zone',
+                'log_url': 'fake_swift_url'
+            }
+        )
+        self.executor_server.finish_job.assert_called_with(
+            self.job.unique
         )
 
     @mock.patch('subprocess.Popen', auto_spec=True)
@@ -277,3 +303,52 @@ class TestAnsibleJob(TestBase):
             cwd=self.job.job_work_dir,
             restore_signals=False
         )
+
+
+class TestServer(TestBase):
+    def _start_gear(self):
+        import gear
+        return gear.Server(4730, 'localhost', keepalive=False)
+
+    def __get_cloud_config(self, job):
+        job.sendWorkComplete(
+            json.dumps({
+                '_version': 0,
+                'clouds': {
+                    'a': 'vault|engine=secret|path=fake|attr=foo'
+                }
+            })
+        )
+
+    def test_get_logs_link(self):
+        executor = server.ExecutorServer(self.config, standalone=True)
+        executor._logs_container_name = 'fake_container'
+        executor._logs_cloud = mock.Mock(auto_spec=True)
+        executor._logs_cloud.object_store.get_endpoint.return_value = \
+            'http://fake_url'
+        res = executor._get_logs_link('job', 'res.txt')
+        self.assertEqual('http://fake_url/fake_container/job/res.txt', res)
+
+    def test_get_clouds_config(self):
+        """Verify we get cloud config from scheduler and expand vars from
+        vault
+        """
+        self._start_gear()
+        gear_worker = GearWorker(
+            'Fake', 'log', 'thread', self.config,
+            {'apimon:get_cloud_config': self.__get_cloud_config})
+        gear_worker.start()
+        executor = server.ExecutorServer(self.config)
+        with mock.patch(
+            'hvac.api.secrets_engines.kv_v2.KvV2.read_secret'
+        ) as mock_vault:
+            mock_vault.return_value = {'data': {'data': {'foo': 'bar'}}}
+            executor._get_clouds_config(0)
+            self.assertDictEqual(
+                {
+                    'clouds': {
+                        'a': 'bar'
+                    },
+                },
+                executor._clouds_config
+            )

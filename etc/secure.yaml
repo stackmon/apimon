@@ -1,4 +1,7 @@
 ---
+vault:
+  addr: http://localhost:8200
+  token: "root"
 additional_vars:
   foo: bar
 statsd:
