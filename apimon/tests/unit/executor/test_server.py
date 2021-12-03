@@ -315,7 +315,7 @@ class TestServer(TestBase):
             json.dumps({
                 '_version': 0,
                 'clouds': {
-                    'a': 'vault|engine:secret|path:fake|attr:foo'
+                    'a': 'vault|engine=secret|path=fake|attr=foo'
                 }
             })
         )

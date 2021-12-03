@@ -49,8 +49,8 @@ class TestConfig(TestCase):
                 name='vault_cloud',
                 data=dict(
                     auth=dict(
-                        username="vault|engine:secret|path:usr1|attr:username",
-                        password="vault|engine:secret|path:usr1|attr:password"
+                        username="vault|engine=secret|path=usr1|attr=username",
+                        password="vault|engine=secret|path=usr1|attr=password"
                     )
                 )
             )

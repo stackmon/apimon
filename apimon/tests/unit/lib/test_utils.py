@@ -47,6 +47,6 @@ class TestUtils(TestCase):
             self.assertEqual(
                 'bar',
                 utils.expand_vars(
-                    'vault|engine:secret|path:fake_path|attr:attr_name',
+                    'vault|engine=secret|path=fake_path|attr=attr_name',
                     fake_client)
             )

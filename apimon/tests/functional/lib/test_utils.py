@@ -33,7 +33,7 @@ class TestUtils(TestCase):
         self.assertEqual(
             'bar',
             utils.expand_vars(
-                'vault|engine:secret|path:usr1|attr:password',
+                'vault|engine=secret|path=usr1|attr=password',
                 vault_client)
         )
 
@@ -55,9 +55,9 @@ class TestUtils(TestCase):
             )
         )
         struct = {
-            'foo': 'vault|engine:secret|path:fake|attr:foo',
+            'foo': 'vault|engine=secret|path=fake|attr=foo',
             'inline': {
-                'foo2': 'vault|engine:secret|path:fake2|attr:foo'
+                'foo2': 'vault|engine=secret|path=fake2|attr=foo'
             }
         }
 

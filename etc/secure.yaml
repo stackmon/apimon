@@ -1,8 +1,6 @@
 ---
 vault:
   addr: http://localhost:8200
-    #  role_id: some_role
-    #secret_id: "top_secret!123"
   token: "root"
 additional_vars:
   foo: bar

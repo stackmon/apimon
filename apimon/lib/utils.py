@@ -56,7 +56,7 @@ def expand_vars(value, vault_client=None):
         return value
     try:
         pairs = value.split('|')
-        dt = {k: v for k, v in [x.split(':') for x in pairs[1:]]}
+        dt = {k: v for k, v in [x.split('=') for x in pairs[1:]]}
         if dt['engine'] == 'secret':
             data = vault_client.secrets.kv.v2.read_secret(
                 path=dt['path']
