@@ -19,16 +19,12 @@ import json
 
 import openstack
 
-try:
-    from alertaclient.api import Client as alerta_client
-except ImportError:
-    alerta_client = None
-
 from apimon.lib import queue as _queue
+from apimon.lib import alerta_client
 from apimon.lib.gearworker import GearWorker
 from apimon.lib.statsd import get_statsd
 from apimon.project import Project
-from apimon.model import TestEnvironment, Cloud
+from apimon.model import TestEnvironment
 
 from apimon.lib import commandsocket
 
@@ -159,8 +155,8 @@ class GitRefresh(threading.Thread):
                         project.refresh_git_repo()
                         self.scheduler._git_updated(project)
                     except Exception:
-                        self.log.exception('Exception during updating git '
-                                           'repo')
+                        self.log.exception(
+                            'Exception during updating git repo')
 
 
 class ProjectCleanup(threading.Thread):
@@ -220,25 +216,25 @@ class ProjectCleanup(threading.Thread):
                 self._project_cleanup(cloud)
 
     def _get_cloud_connect(self, cloud):
-        auth_part = {}
-        for cnf in self.config.config.get('clouds', []):
-            if cnf.get('name') == cloud:
-                auth_part = cnf.get('data')
-        if not auth_part:
+        cloud_config = self.config.get_cloud('clouds', cloud)
+        if not cloud_config:
             self.log.error('Cannot determine cloud configuration for the '
                            'project cleanup of %s' % cloud)
             return None
         region = openstack.config.get_cloud_region(
             load_yaml_config=False,
-            **auth_part)
+            **cloud_config)
         try:
             conn = openstack.connection.Connection(
                 config=region,
             )
+            conn.authorize()
             return conn
-        except Exception:
-            self.log.exception('Cannot establish connection to cloud %s' %
-                               cloud)
+        except openstack.exceptions.SDKException as ex:
+            self.conn = None
+            self.log.exception(
+                f"Cannot connect to the cloud {cloud}: {str(ex)}")
+            self.send_alert('identity', 'ConnectionException', str(ex))
 
     def _project_cleanup(self, target_cloud):
         conn = self._get_cloud_connect(target_cloud)
@@ -300,7 +296,7 @@ class Scheduler(threading.Thread):
         }
         self.statsd = get_statsd(self.config, statsd_extra_keys)
 
-        self._alerta = None
+        self._alerta = alerta_client.AlertaClient(self.config)
         self._projects = {}
         self._environments = {}
         self._clouds = {}
@@ -369,23 +365,14 @@ class Scheduler(threading.Thread):
             )
             self._environments[env.name] = env
 
-    def _load_clouds(self) -> None:
-        """Load cloud connections"""
-        self._clouds.clear()
-        for item in self.config.get_section('clouds'):
-            cl = Cloud(
-                name=item.get('name'),
-                data=item.get('data')
-            )
-            self._clouds[cl.name] = cl
-
     def _load_clouds_config(self) -> None:
         """Load clouds configuration from the config"""
         clouds = {}
         conf = {}
-        for item in self.config.get_section('clouds'):
-            clouds[item.get('name')] = item.get('data')
-        conf['clouds'] = clouds
+        for name, data in self.config.get_clouds('clouds'):
+            clouds[name] = data
+        conf['clouds'] = {x[0]: x[1] for x in
+                          self.config.get_clouds('clouds')}
 
         metrics_config = self.config.get_section('metrics')
         if metrics_config:
@@ -400,7 +387,7 @@ class Scheduler(threading.Thread):
         self._stopped = False
 
         self._load_projects()
-        self._load_clouds()
+        self._load_clouds_config()
         self._load_environments()
 
         self._git_refresh_thread.start()
@@ -410,8 +397,8 @@ class Scheduler(threading.Thread):
 
         self._socket_running = True
         self._command_socket.start()
-        self.__socket_thread = threading.Thread(target=self.socket_run,
-                                                name='command')
+        self.__socket_thread = threading.Thread(
+            target=self.socket_run, name='command')
         self.__socket_thread.daemon = True
         self.__socket_thread.start()
 
@@ -544,6 +531,8 @@ class Scheduler(threading.Thread):
         self.operational_event_queue.task_done()
 
     def _reconfig(self, event) -> None:
+        self.alerta.connect(force=True)
+
         self.__executor_client.pause_scheduling()
 
         self._git_refresh_thread.stop()
@@ -552,14 +541,6 @@ class Scheduler(threading.Thread):
         self._project_cleanup_thread.join()
 
         self.config = event.config
-
-        if alerta_client:
-            alerta_ep = self.config.get_default('alerta', 'endpoint')
-            alerta_token = self.config.get_default('alerta', 'token')
-            if alerta_ep and alerta_token:
-                self.alerta = alerta_client(
-                    endpoint=alerta_ep,
-                    key=alerta_token)
 
         self._config_version += 1
         self._load_clouds_config()

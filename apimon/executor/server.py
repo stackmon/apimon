@@ -30,16 +30,12 @@ import gear
 
 import openstack
 
-from apimon.lib.statsd import get_statsd
-
-try:
-    from alertaclient.api import Client as alerta_client
-except ImportError:
-    alerta_client = None
-
 from apimon.lib import commandsocket
+from apimon.lib import alerta_client
 from apimon.lib.logutils import get_annotated_logger
 from apimon.lib.gearworker import GearWorker
+from apimon.lib.statsd import get_statsd
+from apimon.lib import utils
 from apimon.project import Project
 
 from apimon.executor import resultprocessor
@@ -532,7 +528,7 @@ class ExecutorServer:
 
     log = logging.getLogger('apimon.ExecutorServer')
 
-    def __init__(self, config, zone: str = None):
+    def __init__(self, config, zone: str = None, standalone=False):
         self.log.info('Starting Executor server')
         self.config = config
         self._running = False
@@ -562,7 +558,10 @@ class ExecutorServer:
         }
         self.statsd = get_statsd(self.config, self.statsd_extra_keys)
 
-        self.result_processor = resultprocessor.ResultProcessor(self.config)
+        if not standalone:
+            # Be more tests friendly
+            self.result_processor = resultprocessor.ResultProcessor(
+                self.config)
 
         self._command_running = False
         self.accepting_work = False
@@ -578,7 +577,7 @@ class ExecutorServer:
         self._projects = {}
         self._config_version = None
         self._clouds_config = {}
-        self.alerta = None
+        self.alerta = alerta_client.AlertaClient(self.config)
 
         self.executor_jobs = {
             'apimon:ansible': self.execute_ansible_job,
@@ -604,7 +603,9 @@ class ExecutorServer:
                 server.get('ssl_ca'),
                 keepalive=True, tcp_keepidle=60,
                 tcp_keepintvl=30, tcp_keepcnt=5)
-        self.gear_client.waitForServer()
+        if not standalone:
+            # Be more tests friendly
+            self.gear_client.waitForServer()
 
     def start(self) -> None:
         self._running = True
@@ -619,13 +620,7 @@ class ExecutorServer:
         self.result_processor.daemon = True
         self.result_processor.start()
 
-        if alerta_client:
-            alerta_ep = self.config.get_default('alerta', 'endpoint')
-            alerta_token = self.config.get_default('alerta', 'token')
-            if alerta_ep and alerta_token:
-                self.alerta = alerta_client(
-                    endpoint=alerta_ep,
-                    key=alerta_token)
+        self.alerta.connect()
 
         self.accepting_work = True
 
@@ -711,18 +706,12 @@ class ExecutorServer:
                 self.manage_load()
             except Exception:
                 self.log.exception("Exception in governor thread:")
-            self._send_alerta_heartbeat()
 
-    def _send_alerta_heartbeat(self):
-        if self.alerta:
-            try:
-                self.alerta.heartbeat(
-                    origin='apimon.executor.%s' % self.hostname,
-                    tags=['apimon', 'executor'],
-                    timeout=300
-                )
-            except Exception:
-                self.log.exception('Error sending heartbeat')
+            self.alerta.heartbeat(
+                origin='apimon.executor.%s' % self.hostname,
+                tags=['apimon', 'executor'],
+                timeout=300
+            )
 
     def _create_logs_container(self, connection, container_name):
         container = connection.object_store.create_container(
@@ -768,16 +757,15 @@ class ExecutorServer:
                 return self._get_logs_link(job_id, job_log_file.name)
             except openstack.exceptions.SDKException as e:
                 self.log.exception('Error uploading log to Swift')
-                if self.alerta:
-                    self.alerta.send_alert(
-                        severity='major',
-                        environment=self.config.alerta_env,
-                        origin=self.config.alerta_origin,
-                        service=['apimon', 'task_executor'],
-                        resource='task',
-                        event='LogUpload',
-                        value=str(e)
-                    )
+                self.alerta.send_alert(
+                    severity='major',
+                    environment='apimon',
+                    origin=('executor@%s' % self.zone),
+                    service=['apimon', 'task_executor'],
+                    resource='task',
+                    event='LogUpload',
+                    value=str(e)
+                )
 
                 return ''
 
@@ -976,4 +964,5 @@ class ExecutorServer:
             if d:
                 data = json.loads(d)
                 self._config_version = data.pop('_version')
-                self._clouds_config = data
+                self._clouds_config = utils.expand_dict_vars(
+                    data, vault_client=self.config.vault_client)

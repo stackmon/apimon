@@ -37,12 +37,11 @@ test_environments:
 clouds:
   - name: prod
     data:
-      profile: profile
       auth:
         auth_url: https://my_url
         project_name: test_proj
         user_domain_name: TEST_DOMAIN
-        username: user
+        username: "vault|engine:secrets|path:path|attr:attr"
         password: password
       additional_metric_tags:
         environment: production
@@ -54,7 +53,7 @@ clouds:
         auth_url: https://my_other_url
         project_name: test_proj
         user_domain_name: OTC
-        username: user
+        username: username
         password: password
       additional_metric_tags:
         environment: preprod
@@ -88,8 +87,3 @@ metrics:
      username: foobar
      password: barfoo
      measurement: openstack_api
-epmonitor:
-  socket: /tmp/epmon.socket
-  clouds:
-    - prod
-    - preprod

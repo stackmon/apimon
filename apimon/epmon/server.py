@@ -62,9 +62,10 @@ class EndpointMonitor(threading.Thread):
         self._pause = False
 
     def reload(self) -> None:
+        # Force alerta connect (reseting counter)
         self.alerta.connect(force=True)
-
         self.connect_retries = 0
+
         self.interval = int(self.config.get_default(
             'epmon', 'interval', 5))
 
@@ -76,6 +77,7 @@ class EndpointMonitor(threading.Thread):
         }
         self.statsd = get_statsd(self.config, self.statsd_extra_keys)
 
+        # Read list of clouds we need to monitor
         for cl in self.config.get_default('epmon', 'clouds', []):
             if isinstance(cl, dict):
                 if len(cl.items()) != 1:
@@ -98,11 +100,10 @@ class EndpointMonitor(threading.Thread):
             self.influx_cnf['measurement'] = override_measurement
 
         # Reset openstack conn
-        self.conn = None
-
-        self._connect_cloud()
+        self._connect_cloud(force=True)
 
     def run(self) -> None:
+        """Main loop"""
         while True:
             if self._stopped:
                 return
@@ -113,24 +114,31 @@ class EndpointMonitor(threading.Thread):
                 if self._pause:
                     # Do not send heartbeat as well to not to forget to resume
                     continue
+                # If we are connected try to perform query
                 if self.conn and self.conn.config.get_auth().get_auth_state():
                     self._execute()
-                    self.alerta.heartbeat(
-                        origin='apimon.epmon.%s.%s' % (
-                            self.zone, self.target_cloud),
-                        tags=['apimon', 'epmon'],
-                        attributes={
-                            'zone': self.zone,
-                            'cloud': self.target_cloud,
-                            'service': ['apimon', 'epmon'],
-                        }
-                    )
 
+                self.alerta.heartbeat(
+                    origin='apimon.epmon.%s.%s' % (
+                        self.zone, self.target_cloud),
+                    tags=['apimon', 'epmon'],
+                    attributes={
+                        'zone': self.zone,
+                        'cloud': self.target_cloud,
+                        'service': ['apimon', 'epmon'],
+                    }
+                )
+
+                # Have some rest
                 time.sleep(self.interval)
             except Exception:
                 self.log.exception("Exception checking endpoints:")
 
-    def _connect_cloud(self):
+    def _connect_cloud(self, force=False):
+        """Establish cloud connection"""
+        if force:
+            self.connect_retries = 0
+            self.conn = None
         if self.connect_retries > 1:
             self.log.warning(
                 "Reached cloud reconnect limit. Not reconnecting anymore.")
@@ -149,6 +157,7 @@ class EndpointMonitor(threading.Thread):
             self.influx_cnf['additional_metric_tags'] = \
                 cloud_config['additional_metric_tags']
 
+        # Get cloud region config
         self.region = openstack.config.get_cloud_region(
             name=self.target_cloud,
             load_yaml_config=False,
@@ -166,6 +175,7 @@ class EndpointMonitor(threading.Thread):
                 f"openstack.api.{self.target_cloud}.{self.zone}"
             )
 
+        # Try to connect
         try:
             self.conn = openstack.connection.Connection(
                 config=self.region,
@@ -182,11 +192,14 @@ class EndpointMonitor(threading.Thread):
             self.send_alert('identity', 'ConnectionException', str(ex))
 
     def _execute(self):
+        """Perform the tests"""
         eps = []
         try:
             eps = self.conn.config.get_service_catalog(
             ).get_endpoints().items()
         except keystone_exceptions.http.Unauthorized as ex:
+            # If our auth expires and we can not even renew it try to trigger
+            # reconnect
             self.log.error(
                 f"Got Unauthorized exception while listing endpoints:"
                 f"{str(ex)}"
@@ -201,7 +214,8 @@ class EndpointMonitor(threading.Thread):
 
         for service, data in eps:
             if self._stopped:
-                # stop faster
+                # stop faster (do not wait for remaining services to be
+                # checked)
                 return
             endpoint = data[0]['url']
             self.log.debug(f"Checking service {service}")
@@ -222,8 +236,8 @@ class EndpointMonitor(threading.Thread):
                 if urls:
                     for url in urls:
                         if isinstance(url, str):
-                            self._query_endpoint(client, service,
-                                                 endpoint, url)
+                            self._query_endpoint(
+                                client, service, endpoint, url)
                         else:
                             self.log.error(
                                 'Wrong configuration, service_override must'
@@ -234,6 +248,7 @@ class EndpointMonitor(threading.Thread):
                 self._query_endpoint(client, service, endpoint, endpoint)
 
     def _query_endpoint(self, client, service, endpoint, url):
+        """Query concrete endpoint"""
         response = None
         error = None
         try:
@@ -248,7 +263,7 @@ class EndpointMonitor(threading.Thread):
         except openstack.exceptions.SDKException as ex:
             error = ex
             self.log.error(
-                f"Got exception for endpoint {url}: {str(ex)}")
+                f"Got openstack exception for endpoint {url}: {str(ex)}")
         except Exception:
             self.log.exception(
                 f"Got uncatched exception doing request to {url}")
@@ -263,6 +278,7 @@ class EndpointMonitor(threading.Thread):
             else:
                 query_url = url
             result = status_code if status_code != -1 else 'Timeout(5)'
+            # Construct a nice helper message for Alerta
             value = (
                 f'curl -g -i -X GET {query_url} -H '
                 '"X-Auth-Token: ${TOKEN}" '
@@ -277,6 +293,7 @@ class EndpointMonitor(threading.Thread):
     def send_alert(
         self, resource: str, value: str, raw_data: str=None
     ) -> None:
+        """Send alert to alerta"""
         if self.alerta.client:
             self.alerta.send_alert(
                 severity='critical',
