@@ -1,6 +1,6 @@
 ansible==4.4.0
 gear
-otcextensions==0.22.0
+otcextensions==0.26.0
 openstacksdk
 GitPython
 statsd
