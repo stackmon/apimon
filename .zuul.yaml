@@ -2,7 +2,7 @@
 
 - job:
     name: apimon-build-image
-    parent: build-docker-image
+    parent: otc-build-docker-image
     description: Build apimon container image
     timeout: 2700 # 45 minutes
     provides: apimon-container-image
