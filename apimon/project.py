@@ -12,8 +12,8 @@
 
 import logging
 import subprocess
-
 from pathlib import Path
+
 from git import Repo
 
 
@@ -107,12 +107,10 @@ class Project(object):
         try:
             if not self.repo:
                 self.repo = self.get_git_repo()
-            self.repo.remotes.origin.update()
-            self.remote_ref = self.repo.remotes.origin.refs[self.repo_ref]
-            self.repo.head.reference = self.remote_ref
-            self.repo.head.reset(index=True, working_tree=True)
-            self.repo.remotes.origin.pull(
-                self.repo_ref, recurse_submodules=recurse_submodules)
+            # Fetch origin
+            self.repo.remotes.origin.fetch()
+            # Checkout desired branch
+            self.repo.refs[self.repo_ref].checkout()
         except Exception:
             self.log.exception('Cannot update repository')
 
@@ -125,7 +123,9 @@ class Project(object):
         try:
             if not self.repo:
                 self.get_git_repo()
-            self.repo.remotes.origin.update()
+            # Fetch origin
+            self.repo.remotes.origin.fetch()
+            # Get origin target ref to see last commit
             origin_ref = self.repo.remotes.origin.refs[self.repo_ref]
             last_commit_remote = origin_ref.commit
             last_commit_local = self.repo.head.commit
