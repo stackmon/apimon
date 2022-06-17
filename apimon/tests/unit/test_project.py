@@ -11,14 +11,15 @@
 # under the License.
 #
 
-from unittest import TestCase
-import mock
-
-from git import Repo
 import tempfile
 from pathlib import Path
+from unittest import TestCase
 
 from apimon import project as _project
+
+from git import Repo
+
+import mock
 
 
 class TestProject(TestCase):
@@ -65,22 +66,13 @@ class TestProject(TestCase):
     def test_refresh_git_repo(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
             self.assertIsNone(self.project.refresh_git_repo())
-            repo_mock.head.reset.assert_called_with(index=True,
-                                                    working_tree=True)
-            repo_mock.remotes.origin.pull.assert_called_with(
-                'master',
-                recurse_submodules=True)
+            repo_mock.remotes.origin.fetch.assert_called()
 
     def test_refresh_git_repo_branch(self):
         self.project.repo_ref = 'branch'
         with mock.patch.object(self.project, 'repo') as repo_mock:
             self.assertIsNone(self.project.refresh_git_repo())
-            repo_mock.remotes.origin.update.assert_called()
-            repo_mock.head.reset.assert_called_with(index=True,
-                                                    working_tree=True)
-            repo_mock.remotes.origin.pull.assert_called_with(
-                'branch',
-                recurse_submodules=True)
+            repo_mock.remotes.origin.fetch.assert_called()
 
     def test_is_repo_update_necessary(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
@@ -92,10 +84,10 @@ class TestProject(TestCase):
             repo_mock.remotes.origin.refs = {'master': remote_ref}
             repo_mock.head = local_ref
             self.assertTrue(self.project.is_repo_update_necessary())
-            repo_mock.remotes.origin.update.assert_called()
+            repo_mock.remotes.origin.fetch.assert_called()
             repo_mock.head = remote_ref
             self.assertFalse(self.project.is_repo_update_necessary())
-            repo_mock.remotes.origin.update.assert_called()
+            repo_mock.remotes.origin.fetch.assert_called()
 
     def test_ansible_galaxy_install(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
