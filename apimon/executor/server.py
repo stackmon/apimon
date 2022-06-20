@@ -10,44 +10,41 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 #
+import configparser
 import json
 import logging
-import threading
-import traceback
-import time
-import socket
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
-import yaml
-import configparser
-
+import threading
+import time
+import traceback
 from pathlib import Path
+
+from apimon.ansible import logconfig
+from apimon.executor import message
+from apimon.executor import resultprocessor
+from apimon.executor.sensors.cpu import CPUSensor
+from apimon.executor.sensors.pause import PauseSensor
+from apimon.lib import commandsocket
+from apimon.lib.gearworker import GearWorker
+from apimon.lib.logutils import get_annotated_logger
+from apimon.lib.statsd import get_statsd
+from apimon.project import Project
 
 import gear
 
 import openstack
 
-from apimon.lib.statsd import get_statsd
+import yaml
 
 try:
     from alertaclient.api import Client as alerta_client
 except ImportError:
     alerta_client = None
-
-from apimon.lib import commandsocket
-from apimon.lib.logutils import get_annotated_logger
-from apimon.lib.gearworker import GearWorker
-from apimon.project import Project
-
-from apimon.executor import resultprocessor
-from apimon.executor import message
-from apimon.executor.sensors.cpu import CPUSensor
-from apimon.executor.sensors.pause import PauseSensor
-
-from apimon.ansible import logconfig
 
 
 COMMANDS = ['stop', 'pause', 'resume']
@@ -595,7 +592,7 @@ class ExecutorServer:
             worker_args=[self]
         )
 
-        self.log.debug('Connecting to gearman servers')
+        self.log.info('Connecting to gearman servers...')
         self.gear_client = gear.Client()
         for server in self.config.get_section('gear'):
             self.gear_client.addServer(
@@ -605,6 +602,9 @@ class ExecutorServer:
                 keepalive=True, tcp_keepidle=60,
                 tcp_keepintvl=30, tcp_keepcnt=5)
         self.gear_client.waitForServer()
+        self.log.info('Connected to gearman server')
+
+        self._logs_cloud = None
 
     def start(self) -> None:
         self._running = True
@@ -636,6 +636,15 @@ class ExecutorServer:
                                                 name='governor')
         self.governor_thread.daemon = True
         self.governor_thread.start()
+
+        # We need to disable entrypoints cache
+        entrypoints_cache = Path(
+            os.path.expanduser('~/.cache'),
+            'python-entrypoints')
+        entrypoints_cache.mkdir(exist_ok=True)
+        entrypoints_disable = Path(
+            entrypoints_cache, '.disable')
+        entrypoints_disable.touch()
 
     def stop(self) -> None:
         self.log.info("Stopping")

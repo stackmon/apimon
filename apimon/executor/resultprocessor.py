@@ -14,10 +14,10 @@ import logging
 import queue
 import threading
 
-from sqlalchemy import exc
-
 from apimon.executor import message
 from apimon.lib import database
+
+from sqlalchemy import exc
 
 
 class ResultProcessor(threading.Thread):
@@ -37,6 +37,7 @@ class ResultProcessor(threading.Thread):
             self.db_url = config.get_default("executor", "db_url", None)
             if self.db_url:
                 self._connect_to_db()
+        self.db_conn = None
         self.wake_event = threading.Event()
 
     # def start(self):
@@ -89,6 +90,8 @@ class ResultProcessor(threading.Thread):
         is_retry: bool = False
     ) -> None:
         try:
+            if not self.db_conn:
+                return
             with self.db_conn.get_session() as session:
                 for task in tasks:
                     session.create_result_task(**task)
@@ -114,6 +117,8 @@ class ResultProcessor(threading.Thread):
         """Add job entry into DB"""
 
         try:
+            if not self.db_conn:
+                return
             with self.db_conn.get_session() as session:
                 session.create_job_entry(**job)
                 try:

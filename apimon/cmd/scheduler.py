@@ -18,10 +18,9 @@ import socket
 import sys
 
 import apimon.cmd
-
+from apimon.executor import client
 from apimon.lib.statsd import get_statsd_config, normalize_statsd_name
 from apimon.scheduler import scheduler
-from apimon.executor import client
 
 
 class ApimonScheduler(apimon.cmd.App):
@@ -111,7 +110,7 @@ class ApimonScheduler(apimon.cmd.App):
                     statsd_host=statsd_host,
                     statsd_port=statsd_port,
                     statsd_prefix=statsd_prefix,
-                    keepalive=True,
+                    # keepalive=True,
                     tcp_keepidle=300,
                     tcp_keepintvl=60,
                     tcp_keepcnt=5)

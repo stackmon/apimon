@@ -12,10 +12,18 @@
 #
 
 import datetime
-import logging
-import threading
-import sys
 import json
+import logging
+import sys
+import threading
+
+from apimon.lib import commandsocket
+from apimon.lib import queue as _queue
+from apimon.lib.gearworker import GearWorker
+from apimon.lib.statsd import get_statsd
+from apimon.model import Cloud, TestEnvironment
+from apimon.project import Project
+
 
 import openstack
 
@@ -23,14 +31,6 @@ try:
     from alertaclient.api import Client as alerta_client
 except ImportError:
     alerta_client = None
-
-from apimon.lib import queue as _queue
-from apimon.lib.gearworker import GearWorker
-from apimon.lib.statsd import get_statsd
-from apimon.project import Project
-from apimon.model import TestEnvironment, Cloud
-
-from apimon.lib import commandsocket
 
 
 COMMANDS = ['pause', 'resume', 'reconfig', 'stop']
