@@ -11,13 +11,13 @@
 # under the License.
 
 import datetime
+import time
 import unittest
 import uuid
-import time
 
-from apimon.lib import config as _config
 from apimon.executor import message
 from apimon.executor import resultprocessor
+from apimon.lib import config as _config
 
 
 class TestResultProcessor(unittest.TestCase):
@@ -36,7 +36,7 @@ class TestResultProcessor(unittest.TestCase):
         cls.processor.join()
 
     def test_task(self):
-        if not self.processor.db_conn.connected:
+        if not self.processor.db_conn or not self.processor.db_conn.connected:
             self.skipTest('DB not available for test')
 
         task = message.ResultTask(
@@ -66,7 +66,7 @@ class TestResultProcessor(unittest.TestCase):
             sess.session().delete(rs)
 
     def test_job(self):
-        if not self.processor.db_conn.connected:
+        if not self.processor.db_conn or not self.processor.db_conn.connected:
             self.skipTest('DB not available for test')
 
         job = dict(

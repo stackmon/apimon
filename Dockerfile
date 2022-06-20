@@ -10,7 +10,7 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM fedora:35
+FROM quay.io/fedora/fedora:36
 
 LABEL description="APImon (OpenStack API monitoring) container"
 LABEL maintainer="Open Telekom Cloud (ecosystem)"
@@ -34,7 +34,7 @@ WORKDIR /usr/app
 
 COPY ./requirements.txt /usr/app/requirements.txt
 
-#RUN \ 
+#RUN \
 #     git clone https://github.com/opentelekomcloud/python-otcextensions && \
 #    git clone https://github.com/ansible/ansible --branch stable-2.10 && \
 #     git clone https://review.opendev.org/openstack/openstacksdk

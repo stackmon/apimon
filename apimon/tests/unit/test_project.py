@@ -49,8 +49,9 @@ class TestProject(TestCase):
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
 
-            with mock.patch.object(prj, 'refresh_git_repo', return_value=True):
+            with mock.patch.object(prj, 'repo') as git_mock:
                 prj.get_git_repo()
+                git_mock.git.checkout.assert_called()
 
     @mock.patch.object(Repo, 'clone_from')
     def test_get_git_repo_fresh(self, git_mock):
@@ -61,18 +62,19 @@ class TestProject(TestCase):
 
         git_mock.assert_called_with('fake_url',
                                     Path('wrk_dir', 'fake_proj'),
-                                    recurse_submodules='.')
+                                    recurse_submodules='.',
+                                    branch='master')
 
     def test_refresh_git_repo(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
             self.assertIsNone(self.project.refresh_git_repo())
-            repo_mock.remotes.origin.fetch.assert_called()
+            repo_mock.remotes.origin.update.assert_called()
 
     def test_refresh_git_repo_branch(self):
         self.project.repo_ref = 'branch'
         with mock.patch.object(self.project, 'repo') as repo_mock:
             self.assertIsNone(self.project.refresh_git_repo())
-            repo_mock.remotes.origin.fetch.assert_called()
+            repo_mock.remotes.origin.update.assert_called()
 
     def test_is_repo_update_necessary(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
@@ -84,10 +86,10 @@ class TestProject(TestCase):
             repo_mock.remotes.origin.refs = {'master': remote_ref}
             repo_mock.head = local_ref
             self.assertTrue(self.project.is_repo_update_necessary())
-            repo_mock.remotes.origin.fetch.assert_called()
+            repo_mock.remotes.origin.update.assert_called()
             repo_mock.head = remote_ref
             self.assertFalse(self.project.is_repo_update_necessary())
-            repo_mock.remotes.origin.fetch.assert_called()
+            repo_mock.remotes.origin.update.assert_called()
 
     def test_ansible_galaxy_install(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -128,7 +130,7 @@ class TestProject(TestCase):
                                    tmp_dir)
             requirements_file = Path(repo_dir, 'requirements.yml')
 
-            with mock.patch.object(prj, 'refresh_git_repo'), \
+            with mock.patch.object(prj, 'repo'), \
                     mock.patch.object(prj, '_ansible_galaxy_install') \
                     as install_mock:
                 prj.prepare()
