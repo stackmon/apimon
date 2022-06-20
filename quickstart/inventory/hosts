@@ -1,0 +1,5 @@
+[scheduler]
+80.158.57.168 ansible_user=ubuntu
+
+[executor]
+80.158.57.168 ansible_user=ubuntu
