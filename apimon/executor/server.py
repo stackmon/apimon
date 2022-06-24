@@ -641,7 +641,7 @@ class ExecutorServer:
         entrypoints_cache = Path(
             os.path.expanduser('~/.cache'),
             'python-entrypoints')
-        entrypoints_cache.mkdir(exist_ok=True)
+        entrypoints_cache.mkdir(parents=True, exist_ok=True)
         entrypoints_disable = Path(
             entrypoints_cache, '.disable')
         entrypoints_disable.touch()
