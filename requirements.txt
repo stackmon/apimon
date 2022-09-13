@@ -1,7 +1,7 @@
 ansible==4.4.0
 gear
 otcextensions==0.26.0
-openstacksdk
+openstacksdk==0.61.0
 GitPython
 statsd
 influxdb
