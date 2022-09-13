@@ -10,7 +10,6 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 #
-
 import tempfile
 from pathlib import Path
 from unittest import TestCase
@@ -18,6 +17,7 @@ from unittest import TestCase
 from apimon import project as _project
 
 from git import Repo
+from git import SymbolicReference
 
 import mock
 
@@ -90,6 +90,43 @@ class TestProject(TestCase):
             repo_mock.head = remote_ref
             self.assertFalse(self.project.is_repo_update_necessary())
             repo_mock.remotes.origin.update.assert_called()
+
+    def test_git_real_repo(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_url = Path(tmp_dir, 'bare-repo')
+            Repo.init(repo_url, bare=True)
+
+            checkout = tempfile.TemporaryDirectory()
+            control_repo = Repo.clone_from(repo_url, checkout.name)
+            new_file_path = Path(control_repo.working_tree_dir, 'dummy')
+            open(new_file_path, 'wb').close()
+            control_repo.index.add([new_file_path.name])
+            control_repo.index.commit("Initial commit")
+            control_repo.remotes.origin.push()
+
+            branch_name = 'another_branch'
+            SymbolicReference.create(
+                control_repo, "refs/remotes/origin/%s" % branch_name)
+
+            control_repo.create_head(branch_name, 'main')
+            control_repo.remotes[0].refs[branch_name]
+            control_repo.git.push('--set-upstream', 'origin', branch_name)
+
+            project_clone = tempfile.TemporaryDirectory()
+            prj = _project.Project(
+                'fake_project', repo_url, repo_ref=branch_name,
+                work_dir=project_clone.name)
+
+            self.assertFalse(prj.is_repo_update_necessary())
+
+            control_repo.heads.another_branch.checkout()
+            open(new_file_path, 'wb').close()
+            control_repo.index.add([new_file_path.name])
+            control_repo.index.commit("Update")
+            control_repo.remotes.origin.push()
+
+            self.assertTrue(prj.is_repo_update_necessary())
+            prj.refresh_git_repo()
 
     def test_ansible_galaxy_install(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
