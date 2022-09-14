@@ -936,7 +936,7 @@ class ExecutorServer:
     def finish_job(self, unique) -> None:
         """A callback after the job finished processing"""
         try:
-            del(self.job_workers[unique])
+            del self.job_workers[unique]
         except Exception:
             self.log.error('Trying to delete job data %s, which is not there' %
                            unique)

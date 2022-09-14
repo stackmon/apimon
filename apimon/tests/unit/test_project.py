@@ -108,7 +108,7 @@ class TestProject(TestCase):
             SymbolicReference.create(
                 control_repo, "refs/remotes/origin/%s" % branch_name)
 
-            control_repo.create_head(branch_name, 'main')
+            control_repo.create_head(branch_name)
             control_repo.remotes[0].refs[branch_name]
             control_repo.git.push('--set-upstream', 'origin', branch_name)
 
