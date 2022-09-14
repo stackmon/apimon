@@ -32,12 +32,12 @@ class ResultProcessor(threading.Thread):
 
         self._stopped = False
         self.queue = queue.Queue()
+        self.db_conn = None
         if config:
             self.config = config
             self.db_url = config.get_default("executor", "db_url", None)
             if self.db_url:
                 self._connect_to_db()
-        self.db_conn = None
         self.wake_event = threading.Event()
 
     # def start(self):
