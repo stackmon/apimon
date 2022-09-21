@@ -113,7 +113,7 @@ class Project(object):
             self.remote_ref = self.repo.remotes.origin.refs[self.repo_ref]
             self.repo.head.reference = self.remote_ref
             self.repo.head.reset(index=True, working_tree=True)
-            # ensure master is checked out
+            # ensure desired branch is checked out
             self.repo.git.checkout(self.repo_ref)
             self.repo.remotes.origin.pull(
                 self.repo_ref, recurse_submodules=recurse_submodules)
