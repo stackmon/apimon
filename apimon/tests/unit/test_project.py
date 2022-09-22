@@ -137,10 +137,70 @@ class TestProject(TestCase):
                 "We need to pull changes"
             )
 
+            # Pull changes from the server
+            prj.refresh_git_repo()
+
+            self.assertFalse(
+                prj.is_repo_update_necessary(),
+                "Nothing more to pull"
+            )
+
+    def test_refresh_git_repo_with_local_changes(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create git bare-repo to simulate git server
+            repo_url = Path(tmp_dir, 'bare-repo')
+            Repo.init(repo_url, bare=True)
+
+            # Checkout the repo to perform activity on the server side
+            checkout = tempfile.TemporaryDirectory()
+            control_repo = Repo.clone_from(repo_url, checkout.name)
+            new_file_path = Path(control_repo.working_tree_dir, 'dummy')
+            open(new_file_path, 'wb').close()
+            control_repo.index.add([new_file_path.name])
+            control_repo.index.commit("Initial commit")
+            control_repo.remotes.origin.push()
+
+            # Create new branch on the remote repository
+            branch_name = 'another_branch'
+            SymbolicReference.create(
+                control_repo, "refs/remotes/origin/%s" % branch_name)
+            control_repo.create_head(branch_name)
+            control_repo.remotes[0].refs[branch_name]
+            control_repo.git.push('--set-upstream', 'origin', branch_name)
+
+            # Starting to test Project
+            project_clone = tempfile.TemporaryDirectory()
+            prj = _project.Project(
+                'fake_project', repo_url, repo_ref=branch_name,
+                work_dir=project_clone.name)
+
+            self.assertFalse(
+                prj.is_repo_update_necessary(),
+                "Ensure there are no changes after initial clone"
+            )
+
+            # Make some changes on the server side
+            remote_change = 'some remote changes'
+            control_repo.heads.another_branch.checkout()
+            with open(new_file_path, 'w') as f:
+                f.write(remote_change)
+            control_repo.index.add([new_file_path.name])
+            control_repo.index.commit("Update")
+            control_repo.remotes.origin.push()
+
             # Make some local changes
-            test_file_path = Path(prj.work_dir, new_file_path.name)
-            with open(test_file_path, 'w') as f:
-                f.write('AAAAA')
+            local_file_path = Path(
+                prj.repo.working_tree_dir,
+                new_file_path.name
+            )
+            local_change = 'some local changes'
+            with open(local_file_path, 'w') as f:
+                f.write(local_change)
+
+            self.assertTrue(
+                prj.is_repo_update_necessary(),
+                "We need to pull changes"
+            )
 
             self.assertEqual(
                 prj.repo.head.reference.name, branch_name,
@@ -158,6 +218,16 @@ class TestProject(TestCase):
             self.assertFalse(
                 prj.is_repo_update_necessary(),
                 "Nothing more to pull"
+            )
+
+            # Read local file to ensure that local changes have been discarded
+            local_text = ''
+            with open(local_file_path, 'r') as f:
+                local_text = f.read()
+
+            self.assertNotEqual(
+                local_text, local_change,
+                "Local changes has been overwritten"
             )
 
     def test_ansible_galaxy_install(self):
