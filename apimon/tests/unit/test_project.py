@@ -26,14 +26,14 @@ class TestProject(TestCase):
 
     def setUp(self):
         super(TestProject, self).setUp()
-        self.project = _project.Project('fake_proj', 'fake_url', 'master',
+        self.project = _project.Project('fake_proj', 'fake_url', 'main',
                                         'ansible', 'fake_loc', 'fake_cmd %s',
                                         'wrk_dir')
 
     def test_basic(self):
         self.assertEqual('fake_proj', self.project.name)
         self.assertEqual('fake_url', self.project.repo_url)
-        self.assertEqual('master', self.project.repo_ref)
+        self.assertEqual('main', self.project.repo_ref)
         self.assertEqual('ansible', self.project.type)
         self.assertEqual('fake_loc', self.project.location)
         self.assertEqual('fake_cmd %s', self.project.exec_cmd)
@@ -45,7 +45,7 @@ class TestProject(TestCase):
             repo_dir = Path(tmp_dir, 'fake_proj')
 
             Repo.init(repo_dir)
-            prj = _project.Project('fake_proj', 'fake_url', 'master',
+            prj = _project.Project('fake_proj', 'fake_url', 'main',
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
 
@@ -63,7 +63,7 @@ class TestProject(TestCase):
         git_mock.assert_called_with('fake_url',
                                     Path('wrk_dir', 'fake_proj'),
                                     recurse_submodules='.',
-                                    branch='master')
+                                    branch='main')
 
     def test_refresh_git_repo(self):
         with mock.patch.object(self.project, 'repo') as repo_mock:
@@ -83,7 +83,7 @@ class TestProject(TestCase):
             local_ref = mock.Mock()
             local_ref.commit = 1
 
-            repo_mock.remotes.origin.refs = {'master': remote_ref}
+            repo_mock.remotes.origin.refs = {'main': remote_ref}
             repo_mock.head = local_ref
             self.assertTrue(self.project.is_repo_update_necessary())
             repo_mock.remotes.origin.update.assert_called()
@@ -93,9 +93,11 @@ class TestProject(TestCase):
 
     def test_git_real_repo(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create git bare-repo to simulate git server
             repo_url = Path(tmp_dir, 'bare-repo')
             Repo.init(repo_url, bare=True)
 
+            # Checkout the repo to perform activity on the server side
             checkout = tempfile.TemporaryDirectory()
             control_repo = Repo.clone_from(repo_url, checkout.name)
             new_file_path = Path(control_repo.working_tree_dir, 'dummy')
@@ -104,29 +106,59 @@ class TestProject(TestCase):
             control_repo.index.commit("Initial commit")
             control_repo.remotes.origin.push()
 
+            # Create new branch on the remote repository
             branch_name = 'another_branch'
             SymbolicReference.create(
                 control_repo, "refs/remotes/origin/%s" % branch_name)
-
             control_repo.create_head(branch_name)
             control_repo.remotes[0].refs[branch_name]
             control_repo.git.push('--set-upstream', 'origin', branch_name)
 
+            # Starting to test Project
             project_clone = tempfile.TemporaryDirectory()
             prj = _project.Project(
                 'fake_project', repo_url, repo_ref=branch_name,
                 work_dir=project_clone.name)
 
-            self.assertFalse(prj.is_repo_update_necessary())
+            self.assertFalse(
+                prj.is_repo_update_necessary(),
+                "Ensure there are no changes after initial clone"
+            )
 
+            # Make some changes on the server side
             control_repo.heads.another_branch.checkout()
             open(new_file_path, 'wb').close()
             control_repo.index.add([new_file_path.name])
             control_repo.index.commit("Update")
             control_repo.remotes.origin.push()
 
-            self.assertTrue(prj.is_repo_update_necessary())
+            self.assertTrue(
+                prj.is_repo_update_necessary(),
+                "We need to pull changes"
+            )
+
+            # Make some local changes
+            test_file_path = Path(prj.work_dir, new_file_path.name)
+            with open(test_file_path, 'w') as f:
+                f.write('AAAAA')
+
+            self.assertEqual(
+                prj.repo.head.reference.name, branch_name,
+                "We are on the right branch"
+            )
+
+            # Pull changes from the server
             prj.refresh_git_repo()
+
+            self.assertEqual(
+                prj.repo.head.reference.name, branch_name,
+                "We are still on the right branch"
+            )
+
+            self.assertFalse(
+                prj.is_repo_update_necessary(),
+                "Nothing more to pull"
+            )
 
     def test_ansible_galaxy_install(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -134,7 +166,7 @@ class TestProject(TestCase):
 
             Repo.init(repo_dir)
 
-            prj = _project.Project('fake_proj', 'fake_url', 'master',
+            prj = _project.Project('fake_proj', 'fake_url', 'main',
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
             requirements_file = Path(repo_dir, 'requirements.yml')
@@ -162,7 +194,7 @@ class TestProject(TestCase):
 
             Repo.init(repo_dir)
 
-            prj = _project.Project('fake_proj', 'fake_url', 'master',
+            prj = _project.Project('fake_proj', 'fake_url', 'main',
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
             requirements_file = Path(repo_dir, 'requirements.yml')
@@ -201,7 +233,7 @@ class TestProject(TestCase):
             repo_dir = Path(tmp_dir, 'fake_proj')
             repo_dir.mkdir()
 
-            prj = _project.Project('fake_proj', 'fake_url', 'master',
+            prj = _project.Project('fake_proj', 'fake_url', 'main',
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
 
@@ -227,7 +259,7 @@ class TestProject(TestCase):
 #
 #            scenarios = ('scenario_test1.tst', 'scenario_test2.tst')
 #
-#            prj = _project.Project('fake_proj', 'fake_url', 'master',
+#            prj = _project.Project('fake_proj', 'fake_url', 'main',
 #                                   'ansible', 'fake_loc', 'fake_cmd %%s',
 #                                   tmp_dir, scenarios=scenarios)
 #
@@ -255,7 +287,7 @@ class TestProject(TestCase):
             repo_dir = Path(tmp_dir, 'fake_proj')
             repo_dir.mkdir()
 
-            prj = _project.Project('fake_proj', 'fake_url', 'master',
+            prj = _project.Project('fake_proj', 'fake_url', 'main',
                                    'ansible', 'fake_loc', 'fake_cmd %%s',
                                    tmp_dir)
 
