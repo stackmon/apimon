@@ -173,11 +173,7 @@ class TestProject(TestCase):
             prj = _project.Project(
                 'fake_project', repo_url, repo_ref=branch_name,
                 work_dir=project_clone.name)
-
-            self.assertFalse(
-                prj.is_repo_update_necessary(),
-                "Ensure there are no changes after initial clone"
-            )
+            prj.get_git_repo()
 
             # Make some changes on the server side
             remote_change = 'some remote changes'
@@ -193,14 +189,8 @@ class TestProject(TestCase):
                 prj.repo.working_tree_dir,
                 new_file_path.name
             )
-            local_change = 'some local changes'
             with open(local_file_path, 'w') as f:
-                f.write(local_change)
-
-            self.assertTrue(
-                prj.is_repo_update_necessary(),
-                "We need to pull changes"
-            )
+                f.write('some local changes')
 
             self.assertEqual(
                 prj.repo.head.reference.name, branch_name,
@@ -215,19 +205,14 @@ class TestProject(TestCase):
                 "We are still on the right branch"
             )
 
-            self.assertFalse(
-                prj.is_repo_update_necessary(),
-                "Nothing more to pull"
-            )
-
             # Read local file to ensure that local changes have been discarded
             local_text = ''
             with open(local_file_path, 'r') as f:
                 local_text = f.read()
 
-            self.assertNotEqual(
-                local_text, local_change,
-                "Local changes has been overwritten"
+            self.assertEqual(
+                local_text, remote_change,
+                "Local changes have been overwritten"
             )
 
     def test_ansible_galaxy_install(self):
