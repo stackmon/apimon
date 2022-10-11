@@ -235,6 +235,7 @@ class CallbackModule(CallbackBase):
                 # This is bad, but what else can we do?
                 or task.action[:3] in ['rds', 'cce']
                 or task.action in (
+                    'assert', 'ansible.builtin.assert',
                     'script', 'ansible.builtin.script',
                     'command', 'ansible.builtint.command',
                     'wait_for_connection',
