@@ -101,7 +101,7 @@ class ResultProcessor(threading.Thread):
                     session.flush()
                 except exc.OperationalError as ex:
                     self.log.exception('Exception during writing to DB')
-                    session.rollback()
+                    session.session().rollback()
                     if ex.connection_invalidated:
                         self.log.error(
                             'Lost DB Connection identified. Reconnecting...')
@@ -110,8 +110,16 @@ class ResultProcessor(threading.Thread):
                         # we were not retrying so far. Try one last time
                         self.log.info('Going to retry saving data')
                         self._write_data_to_db(tasks, summaries, is_retry=True)
+        except exc.PendingRollbackError:
+            self.log.exception(
+                'PendingRollbackError exception. Reconnecting...')
+            self.db_conn.get_session().session().rollback()
+            self._connect_to_db()
+            self._write_data_to_db(tasks, summaries, is_retry=True)
         except exc.SQLAlchemyError:
-            self.log.exception('Exception during writing to database')
+            self.log.exception(
+                'Exception during writing to database. Reconnecting...')
+            self._connect_to_db()
 
     def add_job_entry(self, job, is_retry: bool=False) -> None:
         """Add job entry into DB"""
