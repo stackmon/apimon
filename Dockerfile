@@ -57,6 +57,10 @@ RUN cd apimon && python3 setup.py install
 
 RUN rm -rf /usr/app/{ansible,apimon,python-otcextensions}
 
+RUN su - apimon -c 'ansible-galaxy collection install opentelekomcloud.cloud \
+  && ansible-galaxy collection install \
+     git+https://opendev.org/openstack/ansible-collections-openstack'
+
 USER apimon
 
 ENV HOME=/home/apimon
