@@ -10,10 +10,10 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM quay.io/fedora/fedora:36
+FROM quay.io/fedora/fedora:38
 
-LABEL description="APImon (OpenStack API monitoring) container"
-LABEL maintainer="Open Telekom Cloud (ecosystem)"
+LABEL description="StackMon component: APImon (OpenStack API monitoring) container"
+LABEL maintainer="StackMon members"
 
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
     install -y git gcc nmap-ncat procps-ng net-tools xz \
