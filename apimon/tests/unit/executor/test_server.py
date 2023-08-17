@@ -81,7 +81,7 @@ class TestBaseJob(TestBase):
         self.assertEqual('fake_job_id', self.base_job.job_id)
         self.assertIsNotNone(self.base_job.log)
 
-    @mock.patch('subprocess.Popen', auto_spec=True)
+    @mock.patch('subprocess.Popen', autospec=True)
     def test_run(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.base_job.job_id
@@ -100,7 +100,7 @@ class TestBaseJob(TestBase):
             restore_signals=False
         )
 
-    @mock.patch('subprocess.Popen', auto_spec=True)
+    @mock.patch('subprocess.Popen', autospec=True)
     def test_execute(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.base_job.job_id
@@ -248,7 +248,7 @@ class TestAnsibleJob(TestBase):
         self.assertEqual(self.job.socket_path,
                          config['callback_apimon_profiler']['socket'])
 
-    @mock.patch('subprocess.Popen', auto_spec=True)
+    @mock.patch('subprocess.Popen', autospec=True)
     def test_execute(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.job.job_id
