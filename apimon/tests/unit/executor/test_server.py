@@ -248,7 +248,8 @@ class TestAnsibleJob(TestBase):
         self.assertEqual(self.job.socket_path,
                          config['callback_apimon_profiler']['socket'])
 
-    @mock.patch('subprocess.Popen', autospec=True)
+    @mock.patch(
+        'subprocess.Popen', spec=True, stdout='', stderr=mock.MagicMock())
     def test_execute(self, sp_mock):
         env_cmp = os.environ.copy()
         env_cmp['TASK_EXECUTOR_JOB_ID'] = self.job.job_id
