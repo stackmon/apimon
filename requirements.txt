@@ -1,6 +1,6 @@
 ansible==8.5.0
 gear
-otcextensions==0.30.7
+otcextensions==0.30.8
 #openstacksdk==0.61.0
 openstacksdk==1.4.0
 GitPython
