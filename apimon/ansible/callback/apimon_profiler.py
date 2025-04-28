@@ -456,7 +456,7 @@ class CallbackModule(CallbackBase):
                     self._display.v('Error writing message to socket %s' % e)
 
     def v2_playbook_on_stats(self, stats):
-        global te, t0
+        global te
 
         te = time.time_ns()
         self._display.display(tasktime())
