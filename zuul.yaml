@@ -31,7 +31,7 @@
     check:
       jobs:
         - otc-tox-pep8
-        - otc-tox-py39
+        - otc-tox-py311
         - apimon-build-image
     check-post:
       jobs:
@@ -39,7 +39,7 @@
     gate:
       jobs:
         - otc-tox-pep8
-        - otc-tox-py39
+        - otc-tox-py311
         - apimon-upload-image
     release:
       jobs:
