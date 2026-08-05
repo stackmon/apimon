@@ -1,6 +1,6 @@
 ansible==7.7.0
 gear
-otcextensions==0.34.7
+otcextensions==0.34.3
 #openstacksdk==0.61.0
 openstacksdk==4.5.0
 GitPython
@@ -13,4 +13,4 @@ alerta
 stevedore==5.6.0
 #dogpile.cache==0.9.2
 sqlalchemy
-psycopg2
+psycopg2-binary
