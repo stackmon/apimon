@@ -18,7 +18,7 @@ LABEL maintainer="StackMon members"
 RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
     install -y git gcc nmap-ncat procps-ng net-tools xz \
     python3-devel python3-setuptools python3-pip \
-    python3-psycopg2 python3-sqlalchemy \
+    python3-sqlalchemy \
     python3-dns && dnf clean all
 
 RUN git config --global user.email "apimon@test.com"
