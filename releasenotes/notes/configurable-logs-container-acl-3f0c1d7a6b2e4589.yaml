@@ -1,0 +1,9 @@
+---
+features:
+  - |
+    The read ACL of the job logs container is now configurable through the
+    new ``executor.logs_cloud_container_read_acl`` option. It defaults to
+    ``.r:*,.rlistings``, which preserves the previous behaviour. Setting it
+    to ``.r:*`` keeps job logs readable by direct URL while refusing to
+    enumerate the container. ``web_listings`` is derived from the ACL, since
+    staticweb can only list what the read ACL exposes.
