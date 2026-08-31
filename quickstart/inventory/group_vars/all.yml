@@ -1,0 +1,78 @@
+scheduler_image: "quay.io/opentelekomcloud/apimon:dev"
+executor_image: "quay.io/opentelekomcloud/apimon:dev"
+
+scheduler_config_file_name: apimon-scheduler.yaml
+scheduler_config:
+  secure: /etc/apimon/apimon-scheduler-secure.yaml
+  gear:
+    # Start gearman service listening on 0.0.0.0
+    - host: 0.0.0.0
+      port: 4730
+      start: true
+  log:
+    config: /etc/apimon/logging.conf
+  statsd:
+    host: localhost
+  scheduler:
+    socket: /tmp/scheduler.socket
+    refresh_interval: 10
+    work_dir: /var/lib/apimon
+    zone: production
+  test_environments:
+    # Environments
+    - name: production
+      env:
+        OS_CLOUD: production
+        SOME_ANOTHER_ENV: fake
+      clouds:
+        - production
+  test_projects:
+    # Git projects with test scenarios
+    - name: apimon
+      repo_url: https://github.com/opentelekomcloud-infra/apimon-tests
+      repo_ref: master
+      scenarios_location: playbooks
+  test_matrix:
+    # Mapping of environments to test projects
+    - env: production
+      project: apimon
+      tasks:
+        - scenario1_token.yaml
+
+scheduler_secure_config_file_name: apimon-scheduler-secure.yaml
+scheduler_secure_config:
+  # OpenStack credentials (cloud name = test_environment.OS_CLOUD)
+  clouds:
+    - name: production
+      data:
+        auth:
+          auth_url: fake.com
+          project_name: project_name
+          user_domain_name: user_domain_name
+          username: username
+          password: password
+
+executor_config_file_name: apimon-executor.yaml
+# Fixme: fix ip address to the target instance
+executor_config:
+  executor:
+    load_multiplier: 2
+    # logs_cloud: swift
+    socket: /tmp/executor.socket
+    work_dir: /var/lib/apimon
+    zone: production
+  gear:
+    # Set gearman host to the ip address of the scheduler (not the localhost
+    # due to containers)
+  - host: 192.168.0.245
+    port: 4730
+  log:
+    config: /etc/apimon/logging.conf
+  metrics:
+    # Where to emit metrics to
+    statsd:
+      host: 192.168.0.245
+      port: 8125
+
+# executor_secure_config_file_name: apimon-executor-secure.yaml
+# executor_secure_config:
