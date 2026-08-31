@@ -734,14 +734,17 @@ class ExecutorServer:
                 self.log.exception('Error sending heartbeat')
 
     def _create_logs_container(self, connection, container_name):
+        read_acl = self.config.get_default(
+            'executor', 'logs_cloud_container_read_acl', '.r:*,.rlistings')
         container = connection.object_store.create_container(
             name=container_name)
         container.set_metadata(
             connection.object_store,
             metadata={
-                'read_ACL': '.r:*,.rlistings',
+                'read_ACL': read_acl,
                 'web_index': 'index.html',
-                'web_listings': 'True'
+                # staticweb can only list what the read ACL exposes
+                'web_listings': str('.rlistings' in read_acl)
             }
         )
         return container

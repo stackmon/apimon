@@ -22,6 +22,10 @@ executor:
   work_dir: wrk_executor
   socket: /tmp/executor.socket
   db_url: postgresql://apimon:apimon@localhost:5432/apimon
+  # Read ACL applied to the job logs container. Defaults to
+  # '.r:*,.rlistings' (world readable and listable). Drop '.rlistings' to
+  # keep logs readable by URL while refusing to enumerate them.
+  # logs_cloud_container_read_acl: '.r:*'
 test_environments:
   - name: prod
     env:

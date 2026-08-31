@@ -278,3 +278,38 @@ class TestAnsibleJob(TestBase):
             cwd=self.job.job_work_dir,
             restore_signals=False
         )
+
+
+class TestLogsContainer(unittest.TestCase):
+    """The logs container ACL is re-applied on every executor start, so it
+    must be configurable rather than hardcoded."""
+
+    def _server(self, **executor_opts):
+        config = _config.Config()
+        config.read('etc/apimon.yaml')
+        config.config.setdefault('executor', {}).update(executor_opts)
+        srv = mock.Mock()
+        srv.config = config
+        return srv
+
+    def _metadata(self, srv):
+        connection = mock.Mock()
+        server.ExecutorServer._create_logs_container(srv, connection,
+                                                     'job_logs')
+        container = connection.object_store.create_container.return_value
+        return container.set_metadata.call_args[1]['metadata']
+
+    def test_default_keeps_public_listings(self):
+        meta = self._metadata(self._server())
+        self.assertEqual('.r:*,.rlistings', meta['read_ACL'])
+        self.assertEqual('True', meta['web_listings'])
+
+    def test_configured_acl_is_used(self):
+        meta = self._metadata(
+            self._server(logs_cloud_container_read_acl='.r:*'))
+        self.assertEqual('.r:*', meta['read_ACL'])
+
+    def test_web_listings_follows_rlistings(self):
+        meta = self._metadata(
+            self._server(logs_cloud_container_read_acl='.r:*'))
+        self.assertEqual('False', meta['web_listings'])
