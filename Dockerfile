@@ -40,7 +40,8 @@ RUN apt-get update && \
         python3-setuptools \
         python3-sqlalchemy \
         python3-dnspython \
-        python3-psycopg2 && \
+        python3-psycopg2 \
+        passwd && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
