@@ -1,0 +1,64 @@
+name: Docker Image Build on tag or release
+
+on:
+  push:
+    tags:
+      - '*'
+  release:
+    types: [published]
+
+env:
+  ORG: opentelekomcloud
+  PROJECT: apimon
+
+jobs:
+  push_if_tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            "${{ secrets.SWR_URL }}/t-cloud-public/${{ env.PROJECT }}"
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to SWR Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.SWR_URL }}
+          username: ${{ secrets.SWR_USERNAME }}
+          password: ${{ secrets.SWR_PASSWORD }}
+
+      - name: Login to Artifactory DHI
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ARTIFACTORY_URL }}
+          username: ${{ secrets.ARTIFACTORY_AUTH_USERNAME }}
+          password: ${{ secrets.ARTIFACTORY_AUTH_PASSWORD }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            ARTIFACTORY_URL=${{ secrets.ARTIFACTORY_URL }}

@@ -10,53 +10,60 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-FROM quay.io/fedora/fedora:38
+
+# Base image is pulled from the DHI Artifactory mirror (hardened, non-root
+# capable) rather than the public upstream. The mirror host is passed in as a
+# build arg (ARTIFACTORY_URL) so the build works both locally and in CI where
+# the secret is injected.
+ARG ARTIFACTORY_URL=artifactory.devops.telekom.de
+FROM ${ARTIFACTORY_URL}/dhi.io/python:3.11-debian13-dev
 
 LABEL description="StackMon component: APImon (OpenStack API monitoring) container"
 LABEL maintainer="StackMon members"
 
-RUN dnf --disablerepo updates-modular --disablerepo fedora-modular \
-    install -y git gcc nmap-ncat procps-ng net-tools xz \
-    python3-devel python3-setuptools python3-pip \
-    python3-sqlalchemy \
-    python3-dns && dnf clean all
+ENV DEBIAN_FRONTEND=noninteractive
+# PEP 668: Debian 13 marks the system Python as externally managed, so pip
+# refuses to install into it without this.
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+# Runtime + build dependencies (Debian 13 / trixie package names).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        gcc \
+        ncat \
+        procps \
+        iproute2 \
+        xz-utils \
+        python3-dev \
+        python3-pip \
+        python3-setuptools \
+        python3-sqlalchemy \
+        python3-dnspython \
+        python3-psycopg2 \
+        passwd && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN git config --global user.email "apimon@test.com"
 RUN git config --global user.name "apimon"
 
-RUN useradd apimon
+# Create a dedicated, non-root user with a real home directory (the container
+# runs as this user at the end).
+RUN useradd -m -d /home/apimon apimon
 
-RUN mkdir -p /var/{lib/apimon,log/apimon,log/executor,log/scheduler}
-
-RUN chown apimon:apimon /var/lib/apimon && chown -R apimon:apimon /var/log/apimon
+RUN mkdir -p /var/lib/apimon /var/log/apimon /var/log/executor /var/log/scheduler
+RUN chown -R apimon:apimon /var/lib/apimon /var/log/apimon /var/log/executor /var/log/scheduler
 
 WORKDIR /usr/app
 
 COPY ./requirements.txt /usr/app/requirements.txt
 
-#RUN \
-#     git clone https://github.com/opentelekomcloud/python-otcextensions && \
-#    git clone https://github.com/ansible/ansible --branch stable-2.10 && \
-#     git clone https://review.opendev.org/openstack/openstacksdk
-
-RUN pip3 install -r /usr/app/requirements.txt
-
-#RUN cd ansible && python3 setup.py install --user
-#RUN cd openstacksdk && python3 setup.py install --force
-#RUN cd python-otcextensions && python3 setup.py install --force
+RUN pip install --no-cache-dir --break-system-packages -r /usr/app/requirements.txt
 
 ADD . /usr/app/apimon
 
-# RUN cd openstacksdk \
-#     && git fetch https://review.opendev.org/openstack/openstacksdk \
-#     refs/changes/97/727097/7 \
-#     && git checkout FETCH_HEAD \
-#     && python3 setup.py install --user
-
-RUN cd apimon && python3 setup.py install
-
-RUN rm -rf /usr/app/{ansible,apimon,python-otcextensions}
+RUN cd /usr/app/apimon && python3 setup.py install
 
 USER apimon
-
 ENV HOME=/home/apimon
